@@ -245,7 +245,6 @@ def keyboard_controller(screen):
                 #
                 if (time.time()-last_loop_time) >= CTRL_LOOP_TIME:
                     fast_dt = time.time()-last_loop_time
-                    print(f"fast_dt {fast_dt}")
                     last_loop_time = time.time()
                     # Send the RC channel values to the FC
                     if board.send_RAW_RC([CMDS[ki] for ki in CMDS_ORDER]):
@@ -258,7 +257,6 @@ def keyboard_controller(screen):
                 if (time.time()-last_slow_msg_time) >= SLOW_MSGS_LOOP_TIME:
                     slow_dt = time.time()-last_slow_msg_time
                     last_slow_msg_time = time.time()
-                    print(f"slow_dt {slow_dt}")
                     next_msg = next(slow_msgs) # circular list
 
                     # Read info from the FC
