@@ -1,9 +1,9 @@
 # Useful commands
-ssh rodion@10.0.0.131
-scp server.py  rodion@10.0.0.131:~/drone
+ssh rodion@10.0.0.131  
+scp server.py  rodion@10.0.0.131:~/drone  
 
 # Sample GUI output
-Press 'q' to quit, 'r' to reboot, 'm' to change mode, 'a' to arm, 'd' to disarm and arrow keys to control
+Press 'q' to quit, 'r' to reboot, 'm' to change mode, 'a' to arm, 'd' to disarm and arrow keys to control  
 
 
 
