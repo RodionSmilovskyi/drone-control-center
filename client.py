@@ -4,7 +4,8 @@
 
 import socket
 import logging
-
+import time
+from yamspy import MSPy
 
 # --- Configuration ---
 COMMAND_PORT = 65000  # The port must match the server's port
@@ -13,14 +14,70 @@ SERIAL_PORT = "/dev/ttyACM0"
 # --- Setup logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def get_barometer_reading():
+    """
+    Connects to the flight controller and retrieves barometer/altitude data.
+    """
+    print(f"Connecting to FC on {SERIAL_PORT}...")
+
+    # The 'with' statement ensures the connection is properly closed
+    # after the block is exited, even if errors occur.
+    try:
+        with MSPy(device=SERIAL_PORT, loglevel='WARNING', baudrate=115200) as board:
+            if board is None:
+                print("Failed to connect to the flight controller.")
+                return
+
+            print("Successfully connected to the flight controller.")
+            print("Requesting barometer data... Press Ctrl+C to stop.")
+
+            while True:
+                # 1. Choose the command to send
+                # For altitude data from the barometer, we use 'MSP_ALTITUDE'
+                msp_command = 'MSP_ALTITUDE'
+
+                # 2. Send the command to the flight controller
+                # The 'send_RAW_msg' method sends the command and waits for a response.
+                # It returns the data if successful, otherwise it might return None or raise an exception.
+                if board.send_RAW_msg(MSPy.MSPCodes[msp_command], data=[]):
+                    
+                    # 3. Get the data from the board's attribute
+                    # The YAMSPy library stores the received data in an attribute
+                    # with the same name as the command (in lowercase).
+                    data_handler = board.receive_msg()
+                    board.process_msg(data_handler)
+
+                    altitude_data = board.ALTITUDE
+                    
+                    # 4. Process and display the data
+                    # The 'alt' key contains the altitude in centimeters.
+                    # The 'vario' key contains the vertical speed in cm/s.
+                    if altitude_data:
+                        altitude_cm = altitude_data['alt']
+                        altitude_m = altitude_cm / 100.0  # Convert to meters
+                        vario_cms = altitude_data['vario']
+
+                        print(f"Altitude: {altitude_m:.2f} meters, Vario: {vario_cms} cm/s")
+                    else:
+                        print("No altitude data received in this cycle.")
+
+                else:
+                    print(f"Failed to send {msp_command} command.")
+
+                # Wait for a short period before sending the next request
+                time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\nStopping data requests. Exiting.")
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
 
 def main():
     """
     Main function to connect to the server and send commands.
     """
     # Get the server's IP address from the user
-    # pi_ip_address = input("Enter the Raspberry Pi's IP address: ").strip()
-    pi_ip_address = '10.0.0.131'
+    pi_ip_address = input("Enter the Raspberry Pi's IP address: ").strip()
     if not pi_ip_address:
         logging.error("No IP address entered. Exiting.")
         return
@@ -37,11 +94,15 @@ def main():
         # --- Main command loop ---
         while True:
             # Get command from user input
-            command = input("\nEnter command (ping, status, time, bar, arm, disarm, or 'exit' to quit): ").strip().lower()
+            command = input("\nEnter command (ping, status, time, bar, or 'exit' to quit): ").strip().lower()
 
             if not command:
                 continue
             
+            if command == 'bar':
+                get_barometer_reading()
+                break
+                
             if command == 'exit':
                 logging.info("Exit command received. Closing connection.")
                 break
