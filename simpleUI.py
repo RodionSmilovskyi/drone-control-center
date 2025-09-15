@@ -196,6 +196,12 @@ def keyboard_controller(screen):
                     board.reboot()
                     time.sleep(0.5)
                     break
+                
+                elif char == ord('c') or char == ord('C'):
+                    cursor_msg = 'Sending Accel Calibration command... KEEP DRONE LEVEL!'
+                    if board.send_RAW_msg(MSPy.MSPCodes['MSP_ACC_CALIBRATION'], data=[]):
+                        dataHandler = board.receive_msg()
+                        board.process_recv_data(dataHandler)
 
                 elif char == ord('a') or char == ord('A'):
                     cursor_msg = 'Sending Arm command...'
