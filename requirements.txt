@@ -1,4 +1,3 @@
 yamspy==0.3.3
-onnx==1.16.2
-onnxruntime==1.19.2
-onnxscript==0.1.0.dev20241001
+numpy==1.23.5
+tflite-runtime==2.14.0
