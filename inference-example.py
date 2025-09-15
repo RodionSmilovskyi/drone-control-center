@@ -7,7 +7,7 @@ input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 
-input_data = np.array([0.5, 0.45], dtype=np.float32)
+input_data = np.array([0.1, 0.65], dtype=np.float32)
 interpreter.set_tensor(input_details[0]['index'], input_data)
 interpreter.invoke()
 

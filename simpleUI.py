@@ -48,6 +48,8 @@ import time
 import curses
 from collections import deque
 from itertools import cycle
+import numpy as np
+import tflite_runtime.interpreter as tflite
 
 from yamspy import MSPy
 
@@ -56,7 +58,13 @@ CTRL_LOOP_TIME = 1/100
 SLOW_MSGS_LOOP_TIME = 1/5 # these messages take a lot of time slowing down the loop...
 
 NO_OF_CYCLES_AVERAGE_GUI_TIME = 10
-
+AI_COMMAND = None # [thrttole, roll, pitch, yaw]
+AI_MODE = False
+INIT_ALT = None
+MAX_ALT = 1
+TAGET_ALT = 0.05
+MAX_ROLL_PITCH = 55
+MAX_YAW = 360
 
 #
 # On Linux, your serial port will probably be something like
@@ -70,6 +78,11 @@ NO_OF_CYCLES_AVERAGE_GUI_TIME = 10
 #
 #
 SERIAL_PORT = "/dev/ttyACM0"
+
+interpreter = tflite.Interpreter(model_path="master-model.tflite")
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 def run_curses(external_function):
     result=1
@@ -117,8 +130,6 @@ def keyboard_controller(screen):
     # The names here don't really matter, they just need to match what is used for the CMDS dictionary.
     # In the documentation, iNAV uses CH5, CH6, etc while Betaflight goes AUX1, AUX2...
     CMDS_ORDER = ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
-    AI_COMMAND = None
-    AI_MODE = False
 
     # "print" doesn't work with curses, use addstr instead
     try:
@@ -198,10 +209,23 @@ def keyboard_controller(screen):
                     break
                 
                 elif char == ord('c') or char == ord('C'):
-                    cursor_msg = 'Sending Accel Calibration command... KEEP DRONE LEVEL!'
+                    cursor_msg = 'Calibration and AI mode ON'
+                    AI_MODE = True
                     if board.send_RAW_msg(MSPy.MSPCodes['MSP_ACC_CALIBRATION'], data=[]):
                         dataHandler = board.receive_msg()
                         board.process_recv_data(dataHandler)
+                        
+                elif char == ord('u') or char == ord('U'):
+                    cursor_msg = 'Target alt set to 0.5'
+                    TAGET_ALT = 0.5
+                    
+                elif char == ord('d') or char == ord('d'):
+                    cursor_msg = 'Target alt set to 0.1'
+                    TAGET_ALT = 0.1
+                        
+                elif char == ord('o') or char == ord('O'):
+                    cursor_msg = 'AI mode OFF'
+                    AI_MODE = False
 
                 elif char == ord('a') or char == ord('A'):
                     cursor_msg = 'Sending Arm command...'
@@ -256,6 +280,23 @@ def keyboard_controller(screen):
                     if board.send_RAW_RC([CMDS[ki] for ki in CMDS_ORDER]):
                         dataHandler = board.receive_msg()
                         board.process_recv_data(dataHandler)
+                        
+                        print(f"fast alt {board.SENSOR_DATA['altitude']} fast angles {board.SENSOR_DATA['kinematics']}")
+                        
+                        if INIT_ALT is None:
+                            INIT_ALT = board.SENSOR_DATA['altitude']
+                        
+                        if AI_MODE is True:
+                            norm_height = round((board.SENSOR_DATA['altitude'] - INIT_ALT)/MAX_ALT, 2)
+                            norm_init_height = round(INIT_ALT/MAX_ALT, 2)
+                            input_data = np.array([norm_init_height, norm_height], dtype=np.float32)
+                            interpreter.set_tensor(input_details[0]['index'], input_data)
+                            interpreter.invoke()
+                            output_data = interpreter.get_tensor(output_details[0]['index'])
+                            
+                            print(f"Output data {output_data}")
+                            
+                        #plug controller
 
                 #
                 # SLOW MSG processing (user GUI)
@@ -264,6 +305,9 @@ def keyboard_controller(screen):
                     slow_dt = time.time()-last_slow_msg_time
                     last_slow_msg_time = time.time()
                     next_msg = next(slow_msgs) # circular list
+                    
+                    #plug ai
+                    # AI_COMMAND = 
 
                     # Read info from the FC
                     if board.send_RAW_msg(MSPy.MSPCodes[next_msg], data=[]):
