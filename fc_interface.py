@@ -14,7 +14,7 @@ COMMAND_TOPIC = "drone/commands"
 STATUS_TOPIC = "drone/status"
 
 # --- Main Logic ---
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, rc, properties):
     """Callback for when the client connects to the broker."""
     if rc == 0:
         print("Connected to MQTT Broker!")
@@ -44,7 +44,7 @@ def on_message(client, userdata, msg):
 
 def main():
     """Main function to connect to FC and loop MQTT client."""
-    client = mqtt.Client(client_id="fc_interface")
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id="fc_interface")
     client.on_connect = on_connect
     client.on_message = on_message
 
