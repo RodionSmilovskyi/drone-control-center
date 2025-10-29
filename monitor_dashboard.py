@@ -46,7 +46,7 @@ def draw_dashboard(stdscr):
     """This function is the main loop for the curses display."""
 
     # --- DEFINE on_connect HERE (MOVED) ---
-    def on_connect(client, userdata, flags, rc):
+    def on_connect(client, userdata, flags, rc, properties):
         """Callback for when the client connects to the broker."""
         # 'stdscr' is now available from the outer scope
         if rc == 0:
@@ -64,7 +64,7 @@ def draw_dashboard(stdscr):
     stdscr.timeout(100) # Refresh up to 10 times per second (100ms)
     
     # --- MQTT Client Setup ---
-    client = mqtt.Client(client_id="drone_dashboard")
+    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id="drone_dashboard")
     client.on_connect = on_connect # Assign the inner function
     client.on_message = on_message
     

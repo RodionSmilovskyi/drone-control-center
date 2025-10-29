@@ -38,7 +38,7 @@ tmux select-pane -t $SESSION_NAME:0.2 -T "AI Agent"
 # 5. Send commands to each pane.
 # 'C-m' simulates pressing the Enter key.
 tmux send-keys -t $SESSION_NAME:0.0 "python3 monitor_dashboard.py" C-m
-tmux send-keys -t $SESSION_NAME:0.1 "python3 fc_interface.py" C-m
+tmux send-keys -t $SESSION_NAME:0.1 "python3 mock_fc.py" C-m
 tmux send-keys -t $SESSION_NAME:0.2 "python3 monitor_dashboard.py" C-m
 
 # 6. Attach to the session.
