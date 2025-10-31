@@ -12,6 +12,7 @@ MQTT_PORT = 1883
 SENSOR_TOPIC = "drone/sensors"
 COMMAND_TOPIC = "drone/commands"
 STATUS_TOPIC = "drone/status"
+SYSTEM_TOPIC = "drone/system_command"
 
 # --- Main Logic ---
 def on_connect(client, userdata, flags, rc, properties):
@@ -24,23 +25,42 @@ def on_connect(client, userdata, flags, rc, properties):
         print(f"Failed to connect, return code {rc}\n")
 
 def on_message(client, userdata, msg):
-    """Callback for when a message is received on a subscribed topic."""
-    board = userdata['board']
-    try:
-        # Decode the command from the MQTT message
-        command_payload = json.loads(msg.payload.decode())
+    """Callback for when a message is received on ANY subscribed topic."""
+    board = userdata.get('board')
+    if not board:
+        print("Board not found in userdata!")
+        return
         
-        # This order is critical and must match your FC's AETR config
-        cmds_order = ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
-        raw_rc_channels = [command_payload.get(key, 1500) for key in cmds_order]
+    try:
+        payload_str = msg.payload.decode()
+        command_payload = json.loads(payload_str)
 
-        # Send the raw RC commands to the flight controller
-        if board.send_RAW_RC(raw_rc_channels):
-            dataHandler = board.receive_msg()
-            board.process_recv_data(dataHandler)
+        # --- Handle RC Commands ---
+        if msg.topic == COMMAND_TOPIC:
+            cmds_order = ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
+            defaults = {'roll': 1500, 'pitch': 1500, 'throttle': 900, 'yaw': 1500, 'aux1': 1000, 'aux2': 1000}
+            raw_rc_channels = [command_payload.get(key, defaults[key]) for key in cmds_order]
+
+            if board.send_RAW_RC(raw_rc_channels):
+                dataHandler = board.receive_msg()
+                board.process_recv_data(dataHandler)
+        
+        # --- Handle System Commands ---
+        elif msg.topic == SYSTEM_TOPIC:
+            command = command_payload.get("command")
+            if command == "calibrate":
+                print("Received CALIBRATE command. Calibrating accelerometer...")
+                if board.send_RAW_msg(MSPy.MSPCodes['MSP_ACC_CALIBRATION'], data=[]):
+                    dataHandler = board.receive_msg()
+                    board.process_recv_data(dataHandler)
+                    print("Calibration complete.")
+                else:
+                    print("Failed to send calibration command.")
 
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"Could not decode or process command: {e}")
+        print(f"Could not decode or process command: {payload_str}. Error: {e}")
+    except Exception as e:
+        print(f"Error in on_message: {e}")
 
 def main():
     """Main function to connect to FC and loop MQTT client."""

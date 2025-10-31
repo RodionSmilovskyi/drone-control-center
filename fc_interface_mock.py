@@ -12,6 +12,7 @@ LOOP_TIME = 1.0 / LOOP_FREQUENCY
 SENSOR_TOPIC = "drone/sensors"
 COMMAND_TOPIC = "drone/commands"
 STATUS_TOPIC = "drone/status"
+SYSTEM_TOPIC = "drone/system_command"
 
 # --- Simulation State ---
 # This dictionary will hold the drone's simulated state
@@ -39,15 +40,24 @@ def on_message(client, userdata, msg):
     global sim_state
     try:
         command_payload = json.loads(msg.payload.decode())
-        sim_state["last_command"] = command_payload
+
+        # --- Handle RC Commands ---
+        if msg.topic == COMMAND_TOPIC:
+            sim_state["last_command"].update(command_payload)
+            if sim_state["last_command"].get("aux1", 1000) > 1500:
+                sim_state["armed"] = True
+            else:
+                sim_state["armed"] = False
+                sim_state["altitude"] = 0.0
         
-        # Simple logic to simulate arming
-        if command_payload.get("aux1", 1000) > 1500:
-            sim_state["armed"] = True
-        else:
-            sim_state["armed"] = False
-            sim_state["altitude"] = 0.0 # Disarming makes it fall
-            
+        # --- Handle System Commands ---
+        elif msg.topic == SYSTEM_TOPIC:
+            command = command_payload.get("command")
+            if command == "calibrate":
+                print("Mock FC received CALIBRATE command. Simulating calibration.")
+                # Reset kinematics to 0
+                sim_state["kinematics"] = [0, 0, 0]
+
     except (json.JSONDecodeError, KeyError) as e:
         print(f"Could not decode or process command: {e}")
 
