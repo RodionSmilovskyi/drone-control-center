@@ -60,7 +60,6 @@ SLOW_MSGS_LOOP_TIME = 1/5 # these messages take a lot of time slowing down the l
 NO_OF_CYCLES_AVERAGE_GUI_TIME = 10
 AI_COMMAND = None # [thrttole, roll, pitch, yaw]
 AI_MODE = False
-INIT_ALT = None
 MAX_ALT = 1
 TAGET_ALT = 0.05
 MAX_ROLL_PITCH = 55
@@ -280,23 +279,7 @@ def keyboard_controller(screen):
                     if board.send_RAW_RC([CMDS[ki] for ki in CMDS_ORDER]):
                         dataHandler = board.receive_msg()
                         board.process_recv_data(dataHandler)
-                        
-                        print(f"fast alt {board.SENSOR_DATA['altitude']} fast angles {board.SENSOR_DATA['kinematics']}")
-                        
-                        if INIT_ALT is None:
-                            INIT_ALT = board.SENSOR_DATA['altitude']
-                        
-                        if AI_MODE is True:
-                            norm_height = round((board.SENSOR_DATA['altitude'] - INIT_ALT)/MAX_ALT, 2)
-                            norm_init_height = round(INIT_ALT/MAX_ALT, 2)
-                            input_data = np.array([norm_init_height, norm_height], dtype=np.float32)
-                            interpreter.set_tensor(input_details[0]['index'], input_data)
-                            interpreter.invoke()
-                            output_data = interpreter.get_tensor(output_details[0]['index'])
-                            
-                            print(f"Output data {output_data}")
-                            
-                        #plug controller
+                         
 
                 #
                 # SLOW MSG processing (user GUI)
