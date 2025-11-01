@@ -1,18 +1,23 @@
+import logging
 import time
 import json
 import paho.mqtt.client as mqtt
+from drone_logging import setup_logger
 
 # --- Configuration ---
 MQTT_BROKER = "localhost"   # Connect to the broker on our local machine
 MQTT_PORT = 1883
 LOOP_FREQUENCY = 100  # Run the simulation at 100Hz
 LOOP_TIME = 1.0 / LOOP_FREQUENCY
+LOG_FILE = "mock_fc.log" # Log file name
 
 # --- MQTT Topics ---
 SENSOR_TOPIC = "drone/sensors"
 COMMAND_TOPIC = "drone/commands"
 STATUS_TOPIC = "drone/status"
 SYSTEM_TOPIC = "drone/system_command"
+
+logger = setup_logger("Mock_FC", LOG_FILE)
 
 # --- Simulation State ---
 # This dictionary will hold the drone's simulated state
@@ -30,14 +35,19 @@ def on_connect(client, userdata, flags, rc, properties):
     """Callback for when the client connects to the broker."""
     if rc == 0:
         print("Mock FC connected to MQTT Broker!")
+        logger.info("Mock FC connected to MQTT Broker!")
         # Subscribe to the command topic to receive instructions
         client.subscribe(COMMAND_TOPIC)
     else:
         print(f"Failed to connect, return code {rc}\n")
+        logger.error(f"Failed to connect, return code {rc}")
 
 def on_message(client, userdata, msg):
     """Callback for when a command is received."""
     global sim_state
+    payload_str = msg.payload.decode()
+    logger.info(f"Received message on topic '{msg.topic}': {payload_str}")
+    
     try:
         command_payload = json.loads(msg.payload.decode())
 
@@ -55,11 +65,13 @@ def on_message(client, userdata, msg):
             command = command_payload.get("command")
             if command == "calibrate":
                 print("Mock FC received CALIBRATE command. Simulating calibration.")
+                logger.info("Received CALIBRATE command. Simulating calibration.")
                 # Reset kinematics to 0
                 sim_state["kinematics"] = [0, 0, 0]
 
     except (json.JSONDecodeError, KeyError) as e:
         print(f"Could not decode or process command: {e}")
+        logger.error(f"Could not decode or process command: {payload_str}. Error: {e}")
 
 def update_simulation():
     """Update the drone's physics based on the last command."""
@@ -98,11 +110,13 @@ def main():
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
     except ConnectionRefusedError:
         print("Connection to MQTT broker refused. Is it running? (Try 'sudo service mosquitto start')")
+        logger.error("Connection to MQTT broker refused. Is it running? (Try 'sudo service mosquitto start')")
         return
 
     client.loop_start() # Handles network traffic in a background thread
 
     print("Mock FC running... Publishing to topics. Press Ctrl+C to stop.")
+    logger.info("Mock FC running... Publishing to topics. Press Ctrl+C to stop.")
     while True:
         try:
             start_time = time.time()
@@ -122,6 +136,9 @@ def main():
             client.publish(SENSOR_TOPIC, json.dumps(sensor_data))
             client.publish(STATUS_TOPIC, json.dumps(status_data))
             
+            logger.debug(f"Published sensors: {sensor_data}")
+            logger.debug(f"Published status: {status_data}")
+            
             # 4. Sleep to maintain the loop frequency
             elapsed = time.time() - start_time
             if elapsed < LOOP_TIME:
@@ -129,9 +146,11 @@ def main():
                 
         except KeyboardInterrupt:
             print("\nShutting down Mock FC...")
+            logger.info("\nShutting down Mock FC...")
             break
 
     client.loop_stop()
 
 if __name__ == '__main__':
+    logger.setLevel(logging.DEBUG)
     main()

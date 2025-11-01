@@ -1,7 +1,9 @@
 import json
+import logging
 import paho.mqtt.client as mqtt
 import curses
 import time
+from drone_logging import setup_logger
 
 # --- Configuration ---
 MQTT_BROKER = "localhost"
@@ -9,6 +11,9 @@ MQTT_PORT = 1883
 COMMAND_TOPIC = "drone/commands"
 STATUS_TOPIC = "drone/status"
 SYSTEM_TOPIC = "drone/system_command" # New topic for commands like 'calibrate'
+LOG_FILE = "keyboard.log"
+
+logger = setup_logger("Teleop", LOG_FILE)
 
 # --- Main Logic ---
 
@@ -44,6 +49,7 @@ def keyboard_controller(screen):
     except ConnectionRefusedError:
         screen.addstr(2, 0, "Could not connect to MQTT Broker. Is it running?")
         screen.refresh()
+        logger.error("Teleop: Connection to MQTT broker refused. Is it running?")
         time.sleep(3)
         return
 
@@ -68,26 +74,33 @@ def keyboard_controller(screen):
 
         # --- Simplified Key input processing ---
         if char == ord('q') or char == ord('Q'):
+            logger.info("Quit command received.")
             break
         elif char == ord('a') or char == ord('A'):
             cursor_msg = 'Sending Arm command (aux1 = 1800)'
+            logger.info("Sending ARM command.")
             cmds['aux1'] = 1800
         elif char == ord('d') or char == ord('D'):
             cursor_msg = 'Sending Disarm command (aux1 = 1000)'
+            logger.info("Sending DISARM command.")
             cmds['aux1'] = 1000
         # Throttle
         elif char == ord('w') or char == ord('W'):
             cmds['throttle'] = min(2000, cmds['throttle'] + 10)
             cursor_msg = f"Throttle (+): {cmds['throttle']}"
+            logger.info(f"Throttle UP: {cmds['throttle']}")
+            
         elif char == ord('s') or char == ord('S'):
             cmds['throttle'] = max(900, cmds['throttle'] - 10)
             cursor_msg = f"Throttle (-): {cmds['throttle']}"
+            logger.info(f"Throttle DOWN: {cmds['throttle']}")
         # Calibrate
         elif char == ord('c') or char == ord('C'):
             cursor_msg = 'Sending CALIBRATE command...'
             # Publish to the new system topic
             client.publish(SYSTEM_TOPIC, json.dumps({"command": "calibrate"}))
-            # We don't publish to the main command topic, as this isn't an RC command
+            # We don't publish to the main command topic, as this isn't an RC 
+            logger.info("Sending CALIBRATE command.")
             continue 
 
         # Publish the current RC command state
@@ -112,5 +125,6 @@ def run_curses(external_function):
         curses.endwin()
 
 if __name__ == "__main__":
+    logger.setLevel(logging.INFO) # or logging.DEBUG
     run_curses(keyboard_controller)
 

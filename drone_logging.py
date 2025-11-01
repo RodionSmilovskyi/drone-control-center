@@ -1,0 +1,37 @@
+import logging
+import sys
+
+def setup_logger(name, log_file, level=logging.INFO):
+    """
+    Creates and configures a logger that writes to both a file
+    and the console (stdout).
+    """
+    # Create a logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    # Create a formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Create a file handler
+    file_handler = logging.FileHandler(log_file, mode='w') # 'w' to overwrite log on each run
+    file_handler.setLevel(level)
+    file_handler.setFormatter(formatter)
+
+    # Create a console handler (stdout)
+    # console_handler = logging.StreamHandler(sys.stdout)
+    # console_handler.setLevel(level)
+    # console_handler.setFormatter(formatter)
+
+    # Add handlers to the logger *only if* it doesn't have them
+    if not logger.hasHandlers():
+        logger.addHandler(file_handler)
+        # logger.addHandler(console_handler)
+    
+    # Propagate to root logger
+    logger.propagate = False 
+
+    return logger

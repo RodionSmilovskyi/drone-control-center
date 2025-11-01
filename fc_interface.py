@@ -2,37 +2,51 @@ import time
 import json
 import paho.mqtt.client as mqtt
 from yamspy import MSPy
+import serial # Import for catching serial exceptions
+import logging # Keep the import
+from drone_logging import setup_logger # Import our new setup function
 
 # --- Configuration ---
-SERIAL_PORT = "/dev/ttyACM0"  # Match your flight controller's serial port
-MQTT_BROKER = "localhost"   # The Pi Zero is the broker
+SERIAL_PORT = "/dev/ttyACM0"
+MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
+LOOP_FREQUENCY = 100
+LOOP_TIME = 1.0 / LOOP_FREQUENCY
+LOG_FILE = "fc_interface.log" # Log file name
 
 # --- MQTT Topics ---
 SENSOR_TOPIC = "drone/sensors"
 COMMAND_TOPIC = "drone/commands"
 STATUS_TOPIC = "drone/status"
-SYSTEM_TOPIC = "drone/system_command"
+SYSTEM_TOPIC = "drone/system_command" # Listen for system commands
+
+# --- Setup Logger ---
+# Use the new centralized logger setup
+logger = setup_logger("FC_Interface", LOG_FILE)
+
 
 # --- Main Logic ---
-def on_connect(client, userdata, flags, rc, properties):
-    """Callback for when the client connects to the broker."""
-    if rc == 0:
-        print("Connected to MQTT Broker!")
-        # Subscribe to the command topic to receive instructions
+def on_connect(client, userdata, flags, reason_code, properties):
+    """V2 API Callback for when the client connects to the broker."""
+    if reason_code == 0:
+        logger.info("FC Interface connected to MQTT Broker!")
+        # Subscribe to topics
         client.subscribe(COMMAND_TOPIC)
+        client.subscribe(SYSTEM_TOPIC) # Subscribe to the new topic
     else:
-        print(f"Failed to connect, return code {rc}\n")
+        logger.error(f"FC Interface failed to connect, return code {reason_code}")
 
 def on_message(client, userdata, msg):
     """Callback for when a message is received on ANY subscribed topic."""
     board = userdata.get('board')
     if not board:
-        print("Board not found in userdata!")
+        logger.error("Board not found in userdata!")
         return
         
+    payload_str = msg.payload.decode()
+    logger.info(f"Received message on topic '{msg.topic}': {payload_str}")
+        
     try:
-        payload_str = msg.payload.decode()
         command_payload = json.loads(payload_str)
 
         # --- Handle RC Commands ---
@@ -49,75 +63,91 @@ def on_message(client, userdata, msg):
         elif msg.topic == SYSTEM_TOPIC:
             command = command_payload.get("command")
             if command == "calibrate":
-                print("Received CALIBRATE command. Calibrating accelerometer...")
+                logger.info("Received CALIBRATE command. Calibrating accelerometer...")
                 if board.send_RAW_msg(MSPy.MSPCodes['MSP_ACC_CALIBRATION'], data=[]):
                     dataHandler = board.receive_msg()
                     board.process_recv_data(dataHandler)
-                    print("Calibration complete.")
+                    logger.info("Calibration complete.")
                 else:
-                    print("Failed to send calibration command.")
+                    logger.warning("Failed to send calibration command.")
 
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"Could not decode or process command: {payload_str}. Error: {e}")
+        logger.error(f"Could not decode or process command: {payload_str}. Error: {e}")
     except Exception as e:
-        print(f"Error in on_message: {e}")
+        logger.error(f"Error in on_message: {e}")
+
 
 def main():
     """Main function to connect to FC and loop MQTT client."""
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id="fc_interface")
     client.on_connect = on_connect
-    client.on_message = on_message
+    client.on_message = on_message # A single callback will handle topic logic
 
-    print("Connecting to the Flight Controller...")
-    with MSPy(device=SERIAL_PORT, loglevel='WARNING', baudrate=115200) as board:
-        if board == 1:
-            print("Could not connect to the flight controller. Aborting.")
-            return
+    logger.info("Connecting to the Flight Controller...")
+    try:
+        with MSPy(device=SERIAL_PORT, loglevel='WARNING', baudrate=115200) as board:
+            if board == 1:
+                logger.error("Could not connect to the flight controller. Aborting.")
+                return
 
-        print("Connected to FC successfully!")
-        client.user_data_set({'board': board})
-        
-        try:
-            client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        except ConnectionRefusedError:
-            print("Connection to MQTT broker refused. Is it running?")
-            return
-
-        # Loop to continuously read sensors and publish data
-        client.loop_start() # Handles reconnects and processes messages in a background thread
-        
-        while True:
+            logger.info("Connected to FC successfully!")
+            client.user_data_set({'board': board})
+            
             try:
-                # Request Attitude and Altitude data from the FC
-                if board.send_RAW_msg(MSPy.MSPCodes['MSP_ATTITUDE'], data=[]):
-                    dataHandler = board.receive_msg()
-                    board.process_recv_data(dataHandler)
-                
-                if board.send_RAW_msg(MSPy.MSPCodes['MSP_ALTITUDE'], data=[]):
-                    dataHandler = board.receive_msg()
-                    board.process_recv_data(dataHandler)
+                client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            except ConnectionRefusedError:
+                logger.error("FC Interface: Connection to MQTT broker refused. Is it running?")
+                return
 
-                # Prepare the sensor data payload
-                sensor_data = {
-                    "kinematics": board.SENSOR_DATA.get('kinematics', [0,0,0]),
-                    "altitude": board.SENSOR_DATA.get('altitude', 0),
-                    "timestamp": time.time()
-                }
+            client.loop_start() 
+            
+            while True:
+                try:
+                    start_time = time.time()
+                    
+                    # --- Sensor Publishing Loop ---
+                    if board.send_RAW_msg(MSPy.MSPCodes['MSP_ATTITUDE'], data=[]):
+                        dataHandler = board.receive_msg()
+                        board.process_recv_data(dataHandler)
+                    
+                    if board.send_RAW_msg(MSPy.MSPCodes['MSP_ALTITUDE'], data=[]):
+                        dataHandler = board.receive_msg()
+                        board.process_recv_data(dataHandler)
 
-                # Publish sensor data to the MQTT topic
-                client.publish(SENSOR_TOPIC, json.dumps(sensor_data))
+                    sensor_data = {
+                        "kinematics": board.SENSOR_DATA.get('kinematics', [0,0,0]),
+                        "altitude": board.SENSOR_DATA.get('altitude', 0),
+                        "timestamp": time.time()
+                    }
+                    client.publish(SENSOR_TOPIC, json.dumps(sensor_data))
+                    logger.debug(f"Published sensors: {sensor_data}") # Log sensor data
 
-                # Also publish armed status
-                ARMED = board.bit_check(board.CONFIG.get('mode', 0), 0)
-                client.publish(STATUS_TOPIC, json.dumps({"armed": ARMED}))
+                    ARMED = board.bit_check(board.CONFIG.get('mode', 0), 0)
+                    client.publish(STATUS_TOPIC, json.dumps({"armed": ARMED}))
+                    logger.debug(f"Published status: armed={ARMED}") # Log status
 
-                time.sleep(1/100)  # Run at approximately 100Hz
+                    elapsed = time.time() - start_time
+                    if elapsed < LOOP_TIME:
+                        time.sleep(LOOP_TIME - elapsed)
 
-            except Exception as e:
-                print(f"An error occurred in the main loop: {e}")
-                break
+                except KeyboardInterrupt:
+                    logger.info("FC Interface stopping...")
+                    break
+                except Exception as e:
+                    logger.error(f"An error occurred in the FC main loop: {e}")
+                    time.sleep(1)
+                    break 
 
-        client.loop_stop()
+            client.loop_stop()
+            
+    except serial.serialutil.SerialException as e:
+        logger.error(f"Serial port error: {e}. Is the drone plugged in at {SERIAL_PORT}?")
+    except Exception as e:
+        logger.error(f"Failed to initialize MSPy: {e}")
+
 
 if __name__ == '__main__':
+    # Set logger level to DEBUG if you want to see sensor/status messages
+    logger.setLevel(logging.DEBUG) # or logging.DEBUG
     main()
+
