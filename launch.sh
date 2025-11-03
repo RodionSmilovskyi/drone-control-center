@@ -50,14 +50,15 @@ tmux split-window -v -t $SESSION_NAME:0.2
 # 5. Set the titles for each pane border
 tmux select-pane -t $SESSION_NAME:0.0 -T "Monitor Dashboard"
 tmux select-pane -t $SESSION_NAME:0.1 -T "Manual Teleop"
-tmux select-pane -t $SESSION_NAME:0.3 -T "AI Agent"
+tmux select-pane -t $SESSION_NAME:0.3 -T "Background Services (Silent)"
 
 
 # 6. Send commands to each pane.
 # 'C-m' simulates pressing the Enter key.
-tmux send-keys -t $SESSION_NAME:0.0 "echo '--- Starting Monitor Dashboard ---'; python3 dashboard.py" C-m
-tmux send-keys -t $SESSION_NAME:0.1 "echo '--- Starting Manual Teleop ---'; python3 keyboard.py" C-m
-tmux send-keys -t $SESSION_NAME:0.3 "echo '--- Starting AI Agent ---'; python3 agent.py" C-m
+tmux send-keys -t $SESSION_NAME:0.0 "python3 dashboard.py" C-m
+tmux send-keys -t $SESSION_NAME:0.1 "python3 keyboard.py" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "python3 strategic_agent.py &" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "python3 tactical_controller.py" C-m
 
 # 7. Launch either the mock or real FC based on the config
 if [ "$USE_MOCK_FC" = true ] ; then
