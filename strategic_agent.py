@@ -141,7 +141,6 @@ def main():
                 interpreter.invoke()
                 # output_data[0] will be the (4,) array you described
                 nn_targets = interpreter.get_tensor(output_details[0]['index'])
-                print("debug", nn_targets, len(nn_targets))
                 # --- 4. Determine NORMALIZED Targets for PID Controller ---
                 # *** MODIFIED: Use the NN (4,) output array ***
                 

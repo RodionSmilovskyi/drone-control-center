@@ -120,7 +120,6 @@ def on_message(client, userdata, msg):
     
     try:
         payload = json.loads(msg.payload.decode())
-        
         if msg.topic == TARGET_TOPIC:
             controller.set_normalized_targets(payload)
 
@@ -131,6 +130,7 @@ def on_message(client, userdata, msg):
 
         elif msg.topic == AI_MODE_TOPIC: 
             controller.ai_mode_enabled = payload.get("ai_enabled", False)
+
             if not controller.ai_mode_enabled:
                 controller.reset() 
                 logger.info("AI mode disabled, PID controller is now idle.")
@@ -138,6 +138,7 @@ def on_message(client, userdata, msg):
         elif msg.topic == SENSOR_TOPIC:
             # This is our main 100Hz control trigger
             command_payload = controller.compute_rc_commands(payload)
+            logger.debug(f"Command payload {command_payload}")
             
             if command_payload:
                 client.publish(COMMAND_TOPIC, json.dumps(command_payload))
