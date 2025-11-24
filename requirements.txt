@@ -2,3 +2,5 @@ yamspy==0.3.3
 numpy==1.23.5
 tflite-runtime==2.14.0
 paho-mqtt==2.1.0
+pmw3901==1.0.0
+adafruit-circuitpython-vl53l1x==1.2.7
