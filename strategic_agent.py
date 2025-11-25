@@ -169,10 +169,10 @@ def main():
                 nn_target_yaw_norm = np.clip(nn_targets[3], -1.0, 1.0)
                 
                 target_setpoints = {
-                    "target_altitude_norm": float(nn_target_alt_norm),
-                    "target_roll_norm": float(nn_target_roll_norm),
-                    "target_pitch_norm": float(nn_target_pitch_norm),
-                    "target_yaw_norm": float(nn_target_yaw_norm)
+                    "target_altitude_norm": round(float(nn_target_alt_norm), 2),
+                    "target_roll_norm": round(float(nn_target_roll_norm), 2),
+                    "target_pitch_norm": round(float(nn_target_pitch_norm), 2),
+                    "target_yaw_norm": round(float(nn_target_yaw_norm),2)
                 }
                 
                 # --- 5. Publish NORMALIZED Targets for PID Controller ---

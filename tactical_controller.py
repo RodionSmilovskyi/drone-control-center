@@ -24,7 +24,7 @@ AI_MODE_TOPIC = "drone/ai_mode"
 COMMAND_TOPIC = "drone/commands" # Publishes REAL RC commands
 
 # --- Setup Logger ---
-logger = setup_logger("Tactical_Controller", LOG_FILE)
+logger = setup_logger("Tactical_Controller", LOG_FILE, logging.DEBUG)
 
 # --- Controller State ---
 class TacticalControllerWrapper:
@@ -131,7 +131,7 @@ def on_message(client, userdata, msg):
         elif msg.topic == AI_MODE_TOPIC: 
             controller.ai_mode_enabled = payload.get("ai_enabled", False)
 
-            if not controller.ai_mode_enabled:
+            if controller.ai_mode_enabled is False:
                 controller.reset() 
                 logger.info("AI mode disabled, PID controller is now idle.")
 
@@ -139,9 +139,11 @@ def on_message(client, userdata, msg):
             # This is our main 100Hz control trigger
             command_payload = controller.compute_rc_commands(payload)
             logger.debug(f"Command payload {command_payload}")
+            print(command_payload)
             
             if command_payload:
-                client.publish(COMMAND_TOPIC, json.dumps(command_payload))
+                pass
+                # client.publish(COMMAND_TOPIC, json.dumps(command_payload))
 
     except json.JSONDecodeError:
         logger.warning(f"Could not decode JSON from topic {msg.topic}")
