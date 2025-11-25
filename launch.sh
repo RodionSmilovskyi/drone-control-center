@@ -58,7 +58,7 @@ tmux select-pane -t $SESSION_NAME:0.3 -T "Background Services (Silent)"
 tmux send-keys -t $SESSION_NAME:0.0 "python3 dashboard.py" C-m
 tmux send-keys -t $SESSION_NAME:0.1 "python3 keyboard.py" C-m
 tmux send-keys -t $SESSION_NAME:0.3 "python3 strategic_agent.py &" C-m
-tmux send-keys -t $SESSION_NAME:0.3 "python3 tactical_controller.py" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "python3 tactical_controller.py &" C-m
 
 # 7. Launch either the mock or real FC based on the config
 if [ "$USE_MOCK_FC" = true ] ; then
