@@ -23,10 +23,9 @@ DOWN_SENSOR_ADDRESS = 0x30            # New address for down sensor
 OBSTACLE_SENSOR_ADDRESS = 0x29        # Default address for obstacle sensor
 
 # SPI (Optical Flow)
-# Using kernel driver method (CS controlled by kernel)
-# Make sure 'dtoverlay=spi0-0cs' is in /boot/firmware/config.txt
-SPI_PORT = 0
-SPI_CS_BUS = 0
+# Use the standard GPIO pin for CS (BCM 8 / CE0)
+# Ensure 'dtoverlay=spi0-0cs' is in /boot/firmware/config.txt so kernel doesn't fight for it
+SPI_CS_PIN = 8 
 
 # --- Setup Logger ---
 logger = setup_logger("Sensor_Node", LOG_FILE)
@@ -77,7 +76,7 @@ def initialize_hardware():
 
         # --- 2. Optical Flow Setup ---
         try:
-            flow = pmw3901.PMW3901(spi_port=SPI_PORT, spi_cs_bus=SPI_CS_BUS, spi_cs_gpio=None)
+            flow = pmw3901.PMW3901(spi_cs_gpio=SPI_CS_PIN)
             flow.set_rotation(0)
             # Quick read to verify
             chip_id, rev = flow.get_id()
