@@ -69,6 +69,7 @@ else
     echo "Launching REAL Flight Controller Interface..."
     tmux select-pane -t $SESSION_NAME:0.2 -T "REAL FC Interface"
     tmux send-keys -t $SESSION_NAME:0.2 "echo '--- Starting REAL FC Interface ---'; python3 fc_interface.py" C-m
+    tmux send-keys -t $SESSION_NAME:0.3 "python3 sensors.py" C-m
 fi
 
 tmux select-pane -t $SESSION_NAME:0.1

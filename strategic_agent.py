@@ -34,8 +34,11 @@ latest_status = {"armed": False}
 ai_mode_enabled = False 
 
 # --- Smoothing Buffers ---
+# These buffers act as our "Short Term Memory" to fuse data from different sources
 altitude_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE)
 kinematics_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE)
+flow_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE) # Added for flow
+obstacle_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE) # Added for obstacle
 
 # --- TFLite Model Setup ---
 try:
@@ -74,8 +77,22 @@ def on_message(client, userdata, msg):
         payload = json.loads(msg.payload.decode())
         
         if msg.topic == SENSOR_TOPIC:
-            altitude_buffer.append(payload.get("altitude", 0.0))
-            kinematics_buffer.append(payload.get("kinematics", [0, 0, 0]))
+            # --- DATA FUSION LOGIC ---
+            # We check WHICH data is in the packet and update only that buffer.
+            # This allows fc_interface (kinematics) and sensor.py (altitude/flow)
+            # to publish asynchronously without overwriting each other with zeros.
+            
+            if "altitude" in payload:
+                altitude_buffer.append(payload["altitude"])
+            
+            if "kinematics" in payload:
+                kinematics_buffer.append(payload["kinematics"])
+                
+            if "obstacle_distance" in payload:
+                obstacle_buffer.append(payload["obstacle_distance"])
+                
+            if "flow" in payload:
+                flow_buffer.append(payload["flow"])
             
         elif msg.topic == STATUS_TOPIC:
             latest_status = payload
@@ -95,6 +112,8 @@ def on_message(client, userdata, msg):
 
 def get_smoothed_data():
     """Calculates the average of the data in the buffers."""
+    # We need BOTH altitude and kinematics to run the NN.
+    # If one buffer is empty (sensor dead?), we cannot proceed.
     if not altitude_buffer or not kinematics_buffer:
         return None, None 
 
@@ -123,6 +142,8 @@ def main():
             start_time = time.time()
             
             is_armed = latest_status.get("armed", False)
+            
+            # This function retrieves the FUSED state from our buffers
             raw_altitude, raw_kinematics = get_smoothed_data()
 
             if ai_mode_enabled and is_armed and raw_altitude is not None and interpreter:
@@ -130,21 +151,18 @@ def main():
                 norm_alt, norm_roll, norm_pitch, norm_yaw = normalize_data(raw_altitude, raw_kinematics)
                 
                 # --- 2. Define Strategic Target (Normalized) ---
-                # This would come from a higher-level planner, but for now, we'll hardcode it.
-                # Let's aim for 1.0 meter altitude (normalized 0.5)
                 norm_target_alt_strategic = 1.0 / MAX_ALTITUDE # 0.5
                 
                 # --- 3. Run NN Inference ---
-                # Using your model's input signature from inference-example.py
+                # Input: [Altitude, Target Altitude]
                 input_data = np.array([norm_alt, norm_target_alt_strategic], dtype=np.float32)
                 interpreter.set_tensor(input_details[0]['index'], input_data)
                 interpreter.invoke()
-                # output_data[0] will be the (4,) array you described
-                nn_targets = interpreter.get_tensor(output_details[0]['index'])
-                # --- 4. Determine NORMALIZED Targets for PID Controller ---
-                # *** MODIFIED: Use the NN (4,) output array ***
                 
-                # Clip all values to be safe
+                # Output: [Target Alt, Target Roll, Target Pitch, Target Yaw]
+                nn_targets = interpreter.get_tensor(output_details[0]['index'])
+                
+                # --- 4. Determine NORMALIZED Targets for PID Controller ---
                 nn_target_alt_norm = np.clip(nn_targets[0], 0.0, 1.0)
                 nn_target_roll_norm = np.clip(nn_targets[1], -1.0, 1.0)
                 nn_target_pitch_norm = np.clip(nn_targets[2], -1.0, 1.0)
@@ -159,10 +177,13 @@ def main():
                 
                 # --- 5. Publish NORMALIZED Targets for PID Controller ---
                 client.publish(TARGET_TOPIC, json.dumps(target_setpoints))
-                logger.info(f"AI Active. Published NORMALIZED Targets: {target_setpoints}")
+                logger.info(f"AI Active. Fused State: Alt={raw_altitude:.2f}m. Targets: {target_setpoints}")
 
             else:
-                logger.debug(f"AI Inactive. (AI Toggle: {ai_mode_enabled}, Armed: {is_armed})")
+                if ai_mode_enabled and (raw_altitude is None or raw_kinematics is None):
+                    logger.warning("AI Enabled but sensors missing! Waiting for data fusion...")
+                else:
+                    logger.debug(f"AI Inactive. (AI Toggle: {ai_mode_enabled}, Armed: {is_armed})")
             
             # --- Maintain Loop Frequency ---
             elapsed = time.time() - start_time
@@ -181,4 +202,3 @@ def main():
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
     main()
-

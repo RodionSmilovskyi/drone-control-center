@@ -120,7 +120,7 @@ def main():
             last_slow_loop_time = time.time()
             
             # Cycle through sensor requests
-            slow_msgs = cycle(['MSP_ATTITUDE', 'MSP_ALTITUDE', 'MSP_STATUS_EX'])
+            slow_msgs = cycle(['MSP_ATTITUDE', 'MSP_STATUS_EX'])
             
             while True:
                 try:
@@ -147,10 +147,9 @@ def main():
                             board.process_recv_data(dataHandler)
                         
                         # Process sensor data
-                        if next_msg == 'MSP_ATTITUDE' or next_msg == 'MSP_ALTITUDE':
+                        if next_msg == 'MSP_ATTITUDE':
                             sensor_data = {
                                 "kinematics": board.SENSOR_DATA.get('kinematics', [0,0,0]),
-                                "altitude": board.SENSOR_DATA.get('altitude', 0),
                                 "timestamp": time.time()
                             }
                             client.publish(SENSOR_TOPIC, json.dumps(sensor_data))

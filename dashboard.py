@@ -11,19 +11,19 @@ MQTT_PORT = 1883
 SENSOR_TOPIC = "drone/sensors"
 STATUS_TOPIC = "drone/status"
 COMMAND_TOPIC = "drone/commands"
-AI_MODE_TOPIC = "drone/ai_mode" # NEW
+AI_MODE_TOPIC = "drone/ai_mode"
 
 # This dictionary will hold the latest known state of the drone
 latest_state = {
     SENSOR_TOPIC: {},
     STATUS_TOPIC: {},
     COMMAND_TOPIC: {},
-    AI_MODE_TOPIC: {"ai_enabled": False}, # NEW
+    AI_MODE_TOPIC: {"ai_enabled": False},
     "last_update": {
         SENSOR_TOPIC: None,
         STATUS_TOPIC: None,
         COMMAND_TOPIC: None,
-        AI_MODE_TOPIC: None # NEW
+        AI_MODE_TOPIC: None 
     }
 }
 
@@ -37,7 +37,13 @@ def on_message(client, userdata, msg):
         
         # Update the state dictionary with the new payload
         if topic in latest_state:
-            latest_state[topic] = payload
+            # Merge dictionaries for sensor topic so we don't lose data 
+            # if sensors report asynchronously (e.g. flow vs altitude)
+            if topic == SENSOR_TOPIC:
+                latest_state[topic].update(payload)
+            else:
+                latest_state[topic] = payload
+                
             latest_state["last_update"][topic] = datetime.now()
             
     except (json.JSONDecodeError, KeyError):
@@ -54,7 +60,7 @@ def draw_dashboard(stdscr):
             try:
                 stdscr.addstr(1, 2, "MQTT Connected.", curses.A_DIM)
             except curses.error:
-                pass # Curses might not be ready, ignore
+                pass 
         else:
             try:
                 stdscr.addstr(1, 2, f"MQTT Failed to connect, return code {reason_code}", curses.A_BOLD)
@@ -96,7 +102,7 @@ def draw_dashboard(stdscr):
             stdscr.clear()
             
             # --- Draw Header ---
-            stdscr.addstr(0, 2, "--- DRONE DASHBOARD (Press 'q' in teleop pane to quit) ---", curses.A_BOLD)
+            stdscr.addstr(0, 2, "--- DRONE DASHBOARD (Press 'q' to quit) ---", curses.A_BOLD)
             
             # --- Draw Status ---
             stdscr.addstr(2, 2, "STATUS", curses.A_BOLD)
@@ -108,7 +114,7 @@ def draw_dashboard(stdscr):
             stdscr.addstr(3, 4, f"FC State: ")
             stdscr.addstr(f"{armed_str}", armed_color | curses.A_BOLD)
 
-            # --- NEW: Draw AI Mode ---
+            # --- Draw AI Mode ---
             ai_status = latest_state[AI_MODE_TOPIC]
             ai_enabled = ai_status.get("ai_enabled", False)
             ai_str = "ENABLED" if ai_enabled else "DISABLED"
@@ -121,25 +127,39 @@ def draw_dashboard(stdscr):
             # --- Draw Sensors ---
             stdscr.addstr(6, 2, "SENSORS", curses.A_BOLD)
             sensors = latest_state[SENSOR_TOPIC]
+            
+            # Altitude
             alt = sensors.get("altitude", 0.0)
-            kine = sensors.get("kinematics", [0, 0, 0])
             stdscr.addstr(7, 4, f"Altitude:   {alt:.2f} m")
+            
+            # Kinematics
+            kine = sensors.get("kinematics", [0, 0, 0])
             stdscr.addstr(8, 4, f"Kinematics: [R:{kine[0]:.1f}, P:{kine[1]:.1f}, Y:{kine[2]:.1f}]")
             
+            # Obstacle Distance (NEW)
+            obs = sensors.get("obstacle_distance", 0.0)
+            stdscr.addstr(9, 4, f"Obstacle:   {obs:.2f} m")
+            
+            # Optical Flow (NEW)
+            flow = sensors.get("flow", {'x': 0, 'y': 0})
+            # Handle case where flow might be None if sensor timed out
+            if flow is None: flow = {'x': 0, 'y': 0} 
+            stdscr.addstr(10, 4, f"Flow:       X:{flow.get('x', 0):>3}  Y:{flow.get('y', 0):>3}")
+            
             # --- Draw Commands ---
-            stdscr.addstr(10, 2, "LAST COMMAND", curses.A_BOLD)
+            stdscr.addstr(12, 2, "LAST COMMAND", curses.A_BOLD)
             cmds = latest_state[COMMAND_TOPIC]
-            stdscr.addstr(11, 4, f"Throttle: {cmds.get('throttle', 0)}")
-            stdscr.addstr(12, 4, f"Roll:     {cmds.get('roll', 0)}")
-            stdscr.addstr(13, 4, f"Pitch:    {cmds.get('pitch', 0)}")
-            stdscr.addstr(14, 4, f"Yaw:      {cmds.get('yaw', 0)}")
+            stdscr.addstr(13, 4, f"Throttle: {cmds.get('throttle', 0)}")
+            stdscr.addstr(14, 4, f"Roll:     {cmds.get('roll', 0)}")
+            stdscr.addstr(15, 4, f"Pitch:    {cmds.get('pitch', 0)}")
+            stdscr.addstr(16, 4, f"Yaw:      {cmds.get('yaw', 0)}")
 
             # --- Draw Footer (Last Update Time) ---
-            stdscr.addstr(16, 2, "Last Sensor Update:  ", curses.A_DIM)
+            stdscr.addstr(18, 2, "Last Sensor Update:  ", curses.A_DIM)
             if latest_state["last_update"][SENSOR_TOPIC]:
                 stdscr.addstr(latest_state["last_update"][SENSOR_TOPIC].strftime('%H:%M:%S.%f')[:-3])
 
-            stdscr.addstr(17, 2, "Last Command Update: ", curses.A_DIM)
+            stdscr.addstr(19, 2, "Last Command Update: ", curses.A_DIM)
             if latest_state["last_update"][COMMAND_TOPIC]:
                 stdscr.addstr(latest_state["last_update"][COMMAND_TOPIC].strftime('%H:%M:%S.%f')[:-3])
 
@@ -148,7 +168,6 @@ def draw_dashboard(stdscr):
         except KeyboardInterrupt:
             break
         except curses.error:
-            # Terminal resize can cause errors, just skip this frame
             pass
 
     # --- Cleanup ---
@@ -157,4 +176,3 @@ def draw_dashboard(stdscr):
 
 if __name__ == '__main__':
     curses.wrapper(draw_dashboard)
-
