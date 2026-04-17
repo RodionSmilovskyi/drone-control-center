@@ -120,6 +120,13 @@ def on_message(client, userdata, msg):
             if new_ai_state != ai_mode_enabled:
                 ai_mode_enabled = new_ai_state
                 logger.info(f"AI Mode set to: {'ENABLED' if ai_mode_enabled else 'DISABLED'}")
+                
+                # Reset accumulators on transition to ENABLED
+                if ai_mode_enabled:
+                    global cumulative_shift_x, cumulative_shift_y
+                    cumulative_shift_x = 0.0
+                    cumulative_shift_y = 0.0
+                    logger.info("Cumulative shift reset to zero.")
 
     except json.JSONDecodeError:
         logger.warning(f"Could not decode JSON from topic {msg.topic}")
