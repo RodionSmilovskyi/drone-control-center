@@ -21,7 +21,7 @@ MAX_ANGLE = 55.0  # Max roll/pitch in degrees for 1.0
 MAX_YAW_ANGLE = 360.0 # Yaw from -180 to 180 -> -1.0 to 1.0 
 MAX_XY_SHIFT = 1.0  # Meters
 MAX_VELOCITY = 5.0  # Meters per second
-FLOW_SCALAR = 0.05 # Tunable constant for pixel-to-metric conversion (guessed value)
+FLOW_SCALAR = 0.3 # Tunable constant for pixel-to-metric conversion (guessed value)
 
 # --- MQTT Topics ---
 SENSOR_TOPIC = "drone/sensors"
