@@ -86,8 +86,12 @@ class TacticalControllerWrapper:
 
         # --- 4. Call YOUR FlightController's compute method ---
         # Prepare inputs as numpy arrays
-        high_level_action = np.array([norm_target_alt, norm_target_roll, norm_target_pitch, norm_target_yaw])
-        state_goal = np.array([norm_alt, norm_roll, norm_pitch, norm_yaw, 0.0]) # Add placeholder for dt in state
+        # The new FlightController expects action[0] in [-1, 1] and remaps it to [0, 1]
+        action_alt_remapped = (norm_target_alt * 2.0) - 1.0
+        high_level_action = np.array([action_alt_remapped, norm_target_roll, norm_target_pitch, norm_target_yaw])
+        
+        # The new FlightController expects state_goal as [altitude, roll, pitch, yaw_rate]
+        state_goal = np.array([norm_alt, norm_roll, norm_pitch, norm_yaw]) 
         
         rc_values = self.fc.compute_rc_commands(high_level_action, state_goal, dt)
         
