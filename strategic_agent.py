@@ -21,7 +21,7 @@ MAX_ANGLE = 55.0  # Max roll/pitch in degrees for 1.0
 MAX_YAW_ANGLE = 360.0 # Yaw from -180 to 180 -> -1.0 to 1.0 
 MAX_XY_SHIFT = 1.0  # Meters
 MAX_VELOCITY = 5.0  # Meters per second
-FLOW_SCALAR = 0.45 # Tunable constant for pixel-to-metric conversion (guessed value)
+FLOW_SCALAR = 0.08 # Adjusted based on 12cm test results
 
 # --- MQTT Topics ---
 SENSOR_TOPIC = "drone/sensors"
@@ -224,7 +224,7 @@ def main():
                 client.publish(TARGET_TOPIC, json.dumps(target_setpoints))
                 
                 # Detailed Debug Logging
-                logger.info(f"AI ACTIVE | Alt: {smoothed_altitude:.2f}m | Flow: {smoothed_flow} | Vel: ({velocity_x:.2f}, {velocity_y:.2f}) | Shift: ({cumulative_shift_x:.2f}, {cumulative_shift_y:.2f})")
+                logger.info(f"AI ACTIVE | Alt: {smoothed_altitude:.2f}m | dt: {dt:.3f}s | Flow: {smoothed_flow} | Vel: ({velocity_x:.2f}, {velocity_y:.2f}) | Shift: ({cumulative_shift_x:.2f}, {cumulative_shift_y:.2f})")
                 logger.info(f"OBSERVATION: {[round(x, 3) for x in observation]}")
                 logger.debug(f"PUBLISHED TARGETS: {target_setpoints}")
 
