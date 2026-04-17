@@ -14,11 +14,12 @@ class FlightController:
     """
     def __init__(self):
         # --- PID Controllers for each axis ---
-        self.throttle_pid = PIDController(Kp=15, Ki=0, Kd=5)
+        self.throttle_pid = PIDController(Kp=10, Ki=0, Kd=9)
         self.roll_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.2)
         self.pitch_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.2)
         self.yaw_pid = PIDController(Kp=1.5, Ki=0.0, Kd=1)
-        self.ff_throttle = 1260
+        self.min_throttle = 1300
+        self.max_throttle = 1375
         
         self.reset()
 
@@ -55,12 +56,12 @@ class FlightController:
         yaw_command = self.yaw_pid.compute(current_yaw_norm, dt)
         
         # --- Convert to [1000, 2000] RC Command Range ---
-        rc_throttle = 1260 + 500 * throttle_command
+        rc_throttle = self.min_throttle + 75 * throttle_command
         rc_roll = 1500 + 500 * roll_command
         rc_pitch = 1500 + 500 * pitch_command
         rc_yaw = 1500 + 500 * yaw_command
 
         rc_commands = np.clip([rc_throttle, rc_roll, rc_pitch, rc_yaw], 1000, 2000)
-
+        rc_commands[0] = np.clip(rc_commands[0], self.min_throttle, self.max_throttle)
         return rc_commands.astype(int)
 

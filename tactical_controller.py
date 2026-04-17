@@ -95,11 +95,18 @@ class TacticalControllerWrapper:
         logger.debug(f"PID Out: RC={rc_values}")
         
         # --- 5. Format and Return RC Command ---
+        # return {
+        #     "roll": int(rc_values[1]),
+        #     "pitch": int(rc_values[2]),
+        #     "throttle": int(rc_values[0]),
+        #     "yaw": int(rc_values[3]),
+        #     "aux1": 1800, "aux2": 1000 # 1800 = Armed
+        # }
         return {
-            "roll": int(rc_values[1]),
-            "pitch": int(rc_values[2]),
+            "roll": 1500,
+            "pitch": 1500,
             "throttle": int(rc_values[0]),
-            "yaw": int(rc_values[3]),
+            "yaw": 1500,
             "aux1": 1800, "aux2": 1000 # 1800 = Armed
         }
 
@@ -139,11 +146,9 @@ def on_message(client, userdata, msg):
             # This is our main 100Hz control trigger
             command_payload = controller.compute_rc_commands(payload)
             logger.debug(f"Command payload {command_payload}")
-            print(command_payload)
             
             if command_payload:
-                pass
-                # client.publish(COMMAND_TOPIC, json.dumps(command_payload))
+                client.publish(COMMAND_TOPIC, json.dumps(command_payload))
 
     except json.JSONDecodeError:
         logger.warning(f"Could not decode JSON from topic {msg.topic}")

@@ -22,7 +22,7 @@ STATUS_TOPIC = "drone/status"
 SYSTEM_TOPIC = "drone/system_command" # Listen for system commands
 
 # --- Setup Logger ---
-logger = setup_logger("FC_Interface", LOG_FILE)
+logger = setup_logger("FC_Interface", LOG_FILE, logging.DEBUG)
 
 # --- Global RC Command State ---
 # This dictionary holds the most recent commands.

@@ -151,8 +151,8 @@ def main():
                 norm_alt, norm_roll, norm_pitch, norm_yaw = normalize_data(raw_altitude, raw_kinematics)
                 
                 # --- 2. Define Strategic Target (Normalized) ---
-                norm_target_alt_strategic = 1.0 / MAX_ALTITUDE # 0.5
-                
+                # norm_target_alt_strategic = 1.0 / MAX_ALTITUDE # 0.5
+                norm_target_alt_strategic = 0.1 / MAX_ALTITUDE
                 # --- 3. Run NN Inference ---
                 # Input: [Altitude, Target Altitude]
                 input_data = np.array([norm_alt, norm_target_alt_strategic], dtype=np.float32)

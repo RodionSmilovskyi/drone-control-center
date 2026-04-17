@@ -28,7 +28,7 @@ OBSTACLE_SENSOR_ADDRESS = 0x29        # Default address for obstacle sensor
 SPI_CS_PIN = 8 
 
 # --- Setup Logger ---
-logger = setup_logger("Sensor_Node", LOG_FILE)
+logger = setup_logger("Sensor_Node", LOG_FILE, logging.DEBUG)
 
 # --- Initialization Functions ---
 def initialize_hardware():
@@ -143,7 +143,7 @@ def main():
                     # Add timestamp to help agent sync data
                     payload['timestamp'] = time.time()
                     client.publish(SENSOR_TOPIC, json.dumps(payload))
-                    # logger.debug(f"Pub: {payload}") # Uncomment for verbose debug
+                    logger.debug(f"Pub: {payload}") # Uncomment for verbose debug
 
             except Exception as e:
                 logger.error(f"Error in main loop: {e}")
@@ -163,5 +163,5 @@ def main():
     logger.info("Cleanup complete.")
 
 if __name__ == "__main__":
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     main()
