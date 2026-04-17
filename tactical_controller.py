@@ -151,8 +151,8 @@ def on_message(client, userdata, msg):
             command_payload = controller.compute_rc_commands(payload)
             logger.debug(f"Command payload {command_payload}")
             
-            if command_payload:
-                client.publish(COMMAND_TOPIC, json.dumps(command_payload))
+            # if command_payload:
+            #     client.publish(COMMAND_TOPIC, json.dumps(command_payload))
 
     except json.JSONDecodeError:
         logger.warning(f"Could not decode JSON from topic {msg.topic}")

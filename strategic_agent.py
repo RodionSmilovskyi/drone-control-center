@@ -19,6 +19,9 @@ SMOOTHING_WINDOW_SIZE = 5
 MAX_ALTITUDE = 1.0  # Max altitude in meters for 1.0
 MAX_ANGLE = 55.0  # Max roll/pitch in degrees for 1.0
 MAX_YAW_ANGLE = 360.0 # Yaw from -180 to 180 -> -1.0 to 1.0 
+MAX_XY_SHIFT = 1.0  # Meters
+MAX_VELOCITY = 5.0  # Meters per second
+FLOW_SCALAR = 0.05 # Tunable constant for pixel-to-metric conversion (guessed value)
 
 # --- MQTT Topics ---
 SENSOR_TOPIC = "drone/sensors"
@@ -32,6 +35,9 @@ logger = setup_logger("Strategic_Agent", LOG_FILE)
 # --- Global State ---
 latest_status = {"armed": False}
 ai_mode_enabled = False 
+cumulative_shift_x = 0.0
+cumulative_shift_y = 0.0
+last_time = time.time()
 
 # --- Smoothing Buffers ---
 # These buffers act as our "Short Term Memory" to fuse data from different sources
@@ -41,15 +47,16 @@ flow_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE) # Added for flow
 obstacle_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE) # Added for obstacle
 
 # --- TFLite Model Setup ---
-try:
-    interpreter = tflite.Interpreter(model_path="master-model.tflite")
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    logger.info("TFLite model loaded successfully.")
-except Exception as e:
-    logger.error(f"Failed to load TFLite model: {e}")
-    interpreter = None
+# try:
+#     interpreter = tflite.Interpreter(model_path="master-model.tflite")
+#     interpreter.allocate_tensors()
+#     input_details = interpreter.get_input_details()
+#     output_details = interpreter.get_output_details()
+#     logger.info("TFLite model loaded successfully.")
+# except Exception as e:
+#     logger.error(f"Failed to load TFLite model: {e}")
+#     interpreter = None
+interpreter = None # Disabled for now
 
 # --- Helper Functions ---
 def normalize_data(raw_altitude, raw_kinematics):
@@ -59,6 +66,11 @@ def normalize_data(raw_altitude, raw_kinematics):
     norm_pitch = np.clip(raw_kinematics[1] / MAX_ANGLE, -1.0, 1.0)
     norm_yaw = np.clip(raw_kinematics[2] / MAX_YAW_ANGLE, -1.0, 1.0)
     return norm_alt, norm_roll, norm_pitch, norm_yaw
+
+def get_dummy_action(observation):
+    """Returns [norm_target_alt_strategic * 2 - 1, 0, 0, 0] as requested."""
+    norm_target_alt_strategic = observation[5] # goal_altitude is at index 5
+    return [norm_target_alt_strategic * 2 - 1, 0.0, 0.0, 0.0]
 
 # --- MQTT Callbacks ---
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -92,7 +104,9 @@ def on_message(client, userdata, msg):
                 obstacle_buffer.append(payload["obstacle_distance"])
                 
             if "flow" in payload:
-                flow_buffer.append(payload["flow"])
+                # payload["flow"] is expected to be {'x': dx, 'y': dy}
+                flow_data = payload["flow"]
+                flow_buffer.append((flow_data.get('x', 0), flow_data.get('y', 0)))
             
         elif msg.topic == STATUS_TOPIC:
             latest_status = payload
@@ -112,18 +126,24 @@ def on_message(client, userdata, msg):
 
 def get_smoothed_data():
     """Calculates the average of the data in the buffers."""
-    # We need BOTH altitude and kinematics to run the NN.
-    # If one buffer is empty (sensor dead?), we cannot proceed.
-    if not altitude_buffer or not kinematics_buffer:
+    # We need altitude to run. Flow might be zero if stationary.
+    if not altitude_buffer:
         return None, None 
 
     smoothed_altitude = sum(altitude_buffer) / len(altitude_buffer)
-    smoothed_kinematics = np.mean(np.array(kinematics_buffer), axis=0).tolist()
     
-    return smoothed_altitude, smoothed_kinematics
+    if flow_buffer:
+        flow_array = np.array(flow_buffer)
+        smoothed_flow = np.mean(flow_array, axis=0).tolist()
+    else:
+        smoothed_flow = [0, 0]
+    
+    return smoothed_altitude, smoothed_flow
 
 # --- Main Loop ---
 def main():
+    global cumulative_shift_x, cumulative_shift_y, last_time
+    
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id="strategic_agent")
     client.on_connect = on_connect
     client.on_message = on_message
@@ -140,50 +160,71 @@ def main():
     while True:
         try:
             start_time = time.time()
+            dt = start_time - last_time
+            last_time = start_time
             
             is_armed = latest_status.get("armed", False)
             
             # This function retrieves the FUSED state from our buffers
-            raw_altitude, raw_kinematics = get_smoothed_data()
+            smoothed_altitude, smoothed_flow = get_smoothed_data()
 
-            if ai_mode_enabled and is_armed and raw_altitude is not None and interpreter:
-                # --- 1. Normalize Sensor Data for NN Input ---
-                norm_alt, norm_roll, norm_pitch, norm_yaw = normalize_data(raw_altitude, raw_kinematics)
+            if ai_mode_enabled and is_armed and smoothed_altitude is not None:
+                # --- 1. Calculate Velocity and Shift from Optical Flow ---
+                # Formula: v = (flow * altitude * FLOW_SCALAR) / dt
+                # We use FLOW_SCALAR to map pixels/frame to something physical
+                if dt > 0:
+                    velocity_x = (smoothed_flow[0] * smoothed_altitude * FLOW_SCALAR) / dt
+                    velocity_y = (smoothed_flow[1] * smoothed_altitude * FLOW_SCALAR) / dt
+                else:
+                    velocity_x, velocity_y = 0.0, 0.0
+
+                cumulative_shift_x += velocity_x * dt
+                cumulative_shift_y += velocity_y * dt
+
+                # --- 2. Construct Observation ---
+                # [altitude, shift_x, shift_y, velocity_x, velocity_y, goal_alt]
+                norm_alt = np.clip(smoothed_altitude / MAX_ALTITUDE, 0.0, 1.0)
+                norm_shift_x = np.clip(cumulative_shift_x / MAX_XY_SHIFT, -1.0, 1.0)
+                norm_shift_y = np.clip(cumulative_shift_y / MAX_XY_SHIFT, -1.0, 1.0)
+                norm_velocity_x = np.clip(velocity_x / MAX_VELOCITY, -1.0, 1.0)
+                norm_velocity_y = np.clip(velocity_y / MAX_VELOCITY, -1.0, 1.0)
                 
-                # --- 2. Define Strategic Target (Normalized) ---
                 # norm_target_alt_strategic = 1.0 / MAX_ALTITUDE # 0.5
                 norm_target_alt_strategic = 0.1 / MAX_ALTITUDE
-                # --- 3. Run NN Inference ---
-                # Input: [Altitude, Target Altitude]
-                input_data = np.array([norm_alt, norm_target_alt_strategic], dtype=np.float32)
-                interpreter.set_tensor(input_details[0]['index'], input_data)
-                interpreter.invoke()
                 
-                # Output: [Target Alt, Target Roll, Target Pitch, Target Yaw]
-                nn_targets = interpreter.get_tensor(output_details[0]['index'])
+                observation = [
+                    norm_alt, 
+                    norm_shift_x, 
+                    norm_shift_y, 
+                    norm_velocity_x, 
+                    norm_velocity_y, 
+                    norm_target_alt_strategic
+                ]
                 
-                # --- 4. Determine NORMALIZED Targets for PID Controller ---
-                nn_target_alt_norm = np.clip(nn_targets[0], 0.0, 1.0)
-                nn_target_roll_norm = np.clip(nn_targets[1], -1.0, 1.0)
-                nn_target_pitch_norm = np.clip(nn_targets[2], -1.0, 1.0)
-                nn_target_yaw_norm = np.clip(nn_targets[3], -1.0, 1.0)
+                # --- 3. Action Generation (Dummy) ---
+                action = get_dummy_action(observation)
                 
+                # Map back to payload. Dummy action returns [alt, roll, pitch, yaw] in [-1, 1]
+                # Tactical controller expects target_altitude_norm in [0, 1]
                 target_setpoints = {
-                    "target_altitude_norm": round(float(nn_target_alt_norm), 2),
-                    "target_roll_norm": round(float(nn_target_roll_norm), 2),
-                    "target_pitch_norm": round(float(nn_target_pitch_norm), 2),
-                    "target_yaw_norm": round(float(nn_target_yaw_norm),2)
+                    "target_altitude_norm": round(float(norm_target_alt_strategic), 2),
+                    "target_roll_norm": round(float(action[1]), 2),
+                    "target_pitch_norm": round(float(action[2]), 2),
+                    "target_yaw_norm": round(float(action[3]), 2)
                 }
                 
-                # --- 5. Publish NORMALIZED Targets for PID Controller ---
+                # --- 4. Publish Targets ---
                 client.publish(TARGET_TOPIC, json.dumps(target_setpoints))
-                logger.info(f"AI Active. Fused State: Alt={raw_altitude:.2f}m. Targets: {target_setpoints}")
+                logger.info(f"AI Active. Observation: {[round(x, 2) for x in observation]}")
 
             else:
-                if ai_mode_enabled and (raw_altitude is None or raw_kinematics is None):
+                if ai_mode_enabled and smoothed_altitude is None:
                     logger.warning("AI Enabled but sensors missing! Waiting for data fusion...")
                 else:
                     logger.debug(f"AI Inactive. (AI Toggle: {ai_mode_enabled}, Armed: {is_armed})")
+                    # Reset accumulators when inactive
+                    cumulative_shift_x = 0.0
+                    cumulative_shift_y = 0.0
             
             # --- Maintain Loop Frequency ---
             elapsed = time.time() - start_time
