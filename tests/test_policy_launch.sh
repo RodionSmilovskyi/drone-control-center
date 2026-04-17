@@ -19,7 +19,7 @@ tmux split-window -h -t $SESSION_NAME:0.0
 tmux split-window -v -t $SESSION_NAME:0.1
 tmux split-window -v -t $SESSION_NAME:0.0
 
-sleep 0.5
+sleep 1.0
 
 # 3. Titles
 tmux select-pane -t $SESSION_NAME:0.0 -T "Sensors"
@@ -31,15 +31,18 @@ tmux select-pane -t $SESSION_NAME:0.3 -T "Tactical Controller"
 # We use $(dirname $(dirname $(realpath $0))) to get to the project root
 ROOT_DIR=$(dirname $(dirname $(realpath "$0")))
 
-tmux send-keys -t $SESSION_NAME:0.0 "cd $ROOT_DIR && python3 -u sensors.py" C-m
-tmux send-keys -t $SESSION_NAME:0.1 "cd $ROOT_DIR && python3 -u strategic_agent.py $TARGET_ALTITUDE" C-m
-tmux send-keys -t $SESSION_NAME:0.3 "cd $ROOT_DIR && python3 -u tactical_controller.py" C-m
+# Send keys slowly to ensure they are captured
+tmux send-keys -t $SESSION_NAME:0.0 "cd $ROOT_DIR && python3 -u sensors.py 2>&1" C-m
+sleep 0.2
+tmux send-keys -t $SESSION_NAME:0.1 "cd $ROOT_DIR && python3 -u strategic_agent.py $TARGET_ALTITUDE 2>&1" C-m
+sleep 0.2
+tmux send-keys -t $SESSION_NAME:0.3 "cd $ROOT_DIR && python3 -u tactical_controller.py 2>&1" C-m
 
 # Wait for hardware and agent to init
-sleep 3
+sleep 5
 
 # 5. Start the live monitor
-tmux send-keys -t $SESSION_NAME:0.2 "cd $ROOT_DIR && python3 -u tests/test_policy_live.py" C-m
+tmux send-keys -t $SESSION_NAME:0.2 "cd $ROOT_DIR && python3 -u tests/test_policy_live.py 2>&1" C-m
 
 
 # 6. Attach
