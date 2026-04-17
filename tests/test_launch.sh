@@ -26,15 +26,17 @@ tmux select-pane -t $SESSION_NAME:0.1 -T "Strategic Agent"
 tmux select-pane -t $SESSION_NAME:0.2 -T "Test Output"
 
 # 4. Start the services with explicit directory context and python flush
-# Using -u to ensure unbuffered output
-tmux send-keys -t $SESSION_NAME:0.0 "cd $(pwd) && python3 -u sensors.py" C-m
-tmux send-keys -t $SESSION_NAME:0.1 "cd $(pwd) && python3 -u strategic_agent.py" C-m
+# We use $(dirname $(dirname $(realpath $0))) to get to the project root
+ROOT_DIR=$(dirname $(dirname $(realpath "$0")))
+
+tmux send-keys -t $SESSION_NAME:0.0 "cd $ROOT_DIR && python3 -u sensors.py" C-m
+tmux send-keys -t $SESSION_NAME:0.1 "cd $ROOT_DIR && python3 -u strategic_agent.py" C-m
 
 # Wait for services to initialize
 sleep 3
 
 # 5. Start the live test script in the final pane
-tmux send-keys -t $SESSION_NAME:0.2 "cd $(pwd) && python3 -u test_strategic_live.py" C-m
+tmux send-keys -t $SESSION_NAME:0.2 "cd $ROOT_DIR && python3 -u tests/test_strategic_live.py" C-m
 
 # 6. Attach to the session
 tmux attach-session -t $SESSION_NAME

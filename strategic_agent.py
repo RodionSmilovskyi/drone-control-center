@@ -197,7 +197,7 @@ def main():
                 norm_velocity_y = np.clip(velocity_y / MAX_VELOCITY, -1.0, 1.0)
                 
                 # norm_target_alt_strategic = 1.0 / MAX_ALTITUDE # 0.5
-                norm_target_alt_strategic = 0.1 / MAX_ALTITUDE
+                norm_target_alt_strategic = 0.5 / MAX_ALTITUDE
                 
                 observation = [
                     norm_alt, 
