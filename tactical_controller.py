@@ -107,10 +107,10 @@ class TacticalControllerWrapper:
         #     "aux1": 1800, "aux2": 1000 # 1800 = Armed
         # }
         return {
-            "roll": 1500,
-            "pitch": 1500,
+            "roll": int(rc_values[1]),
+            "pitch": int(rc_values[2]),
             "throttle": int(rc_values[0]),
-            "yaw": 1500,
+            "yaw": int(rc_values[3]),
             "aux1": 1800, "aux2": 1000 # 1800 = Armed
         }
 

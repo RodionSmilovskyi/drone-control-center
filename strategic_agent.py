@@ -4,6 +4,7 @@ import paho.mqtt.client as mqtt
 import numpy as np
 import tflite_runtime.interpreter as tflite
 import logging
+import sys
 from collections import deque
 from drone_logging import setup_logger
 
@@ -14,6 +15,12 @@ LOG_FILE = "strategic_agent.log"
 LOOP_FREQUENCY = 10  # Run the NN at 10Hz
 LOOP_TIME = 1.0 / LOOP_FREQUENCY
 SMOOTHING_WINDOW_SIZE = 5
+
+# Get target altitude from command line if available
+try:
+    TARGET_ALTITUDE = float(sys.argv[1]) if len(sys.argv) > 1 else 0.5
+except ValueError:
+    TARGET_ALTITUDE = 0.5
 
 # --- Normalization Constants ---
 MAX_ALTITUDE = 1.0  # Max altitude in meters for 1.0
@@ -28,6 +35,7 @@ SENSOR_TOPIC = "drone/sensors"
 STATUS_TOPIC = "drone/status"
 AI_MODE_TOPIC = "drone/ai_mode" 
 TARGET_TOPIC = "drone/target_setpoints" # Publish NORMALIZED targets here
+OBSERVATION_TOPIC = "drone/observation"
 
 # --- Setup Logger ---
 logger = setup_logger("Strategic_Agent", LOG_FILE)
@@ -197,7 +205,7 @@ def main():
                 norm_velocity_y = np.clip(velocity_y / MAX_VELOCITY, -1.0, 1.0)
                 
                 # norm_target_alt_strategic = 1.0 / MAX_ALTITUDE # 0.5
-                norm_target_alt_strategic = 0.5 / MAX_ALTITUDE
+                norm_target_alt_strategic = TARGET_ALTITUDE / MAX_ALTITUDE
                 
                 observation = [
                     norm_alt, 
@@ -220,8 +228,9 @@ def main():
                     "target_yaw_norm": round(float(action[3]), 2)
                 }
                 
-                # --- 4. Publish Targets ---
+                # --- 4. Publish Targets and Observations ---
                 client.publish(TARGET_TOPIC, json.dumps(target_setpoints))
+                client.publish(OBSERVATION_TOPIC, json.dumps({"observation": [round(float(x), 4) for x in observation]}))
                 
                 # Detailed Debug Logging
                 logger.info(f"AI ACTIVE | Alt: {smoothed_altitude:.2f}m | dt: {dt:.3f}s | Flow: {smoothed_flow} | Vel: ({velocity_x:.2f}, {velocity_y:.2f}) | Shift: ({cumulative_shift_x:.2f}, {cumulative_shift_y:.2f})")
