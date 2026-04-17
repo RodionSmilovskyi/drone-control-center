@@ -215,7 +215,11 @@ def main():
                 
                 # --- 4. Publish Targets ---
                 client.publish(TARGET_TOPIC, json.dumps(target_setpoints))
-                logger.info(f"AI Active. Observation: {[round(x, 2) for x in observation]}")
+                
+                # Detailed Debug Logging
+                logger.info(f"AI ACTIVE | Alt: {smoothed_altitude:.2f}m | Flow: {smoothed_flow} | Vel: ({velocity_x:.2f}, {velocity_y:.2f}) | Shift: ({cumulative_shift_x:.2f}, {cumulative_shift_y:.2f})")
+                logger.info(f"OBSERVATION: {[round(x, 3) for x in observation]}")
+                logger.debug(f"PUBLISHED TARGETS: {target_setpoints}")
 
             else:
                 if ai_mode_enabled and smoothed_altitude is None:
