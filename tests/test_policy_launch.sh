@@ -24,28 +24,32 @@ echo "--- LAUNCHING TARGET: $TARGET_ALTITUDE ---"
 ROOT_DIR=$(dirname $(dirname $(realpath "$0")))
 echo "ROOT_DIR detected as: $ROOT_DIR"
 
+# Get the current python path to ensure we use the virtual environment
+PYTHON_CMD=$(which python3)
+echo "Using Python: $PYTHON_CMD"
+
 # 1. Create session (Window 0, Pane 0)
 tmux new-session -d -s $SESSION_NAME -n "PolicyTest"
 sleep 1
 
 # 2. Setup Panes and Start Services ONE BY ONE
 # Pane 0: Sensors (Top-Left)
-tmux send-keys -t $SESSION_NAME:0.0 "cd $ROOT_DIR && clear && python3 -u sensors.py 2>&1" C-m
+tmux send-keys -t $SESSION_NAME:0.0 "cd $ROOT_DIR && clear && $PYTHON_CMD -u sensors.py 2>&1" C-m
 sleep 1
 
 # Pane 1: Strategic Agent (Top-Right)
 tmux split-window -h -t $SESSION_NAME:0.0
-tmux send-keys -t $SESSION_NAME:0.1 "cd $ROOT_DIR && clear && python3 -u strategic_agent.py $TARGET_ALTITUDE 2>&1" C-m
+tmux send-keys -t $SESSION_NAME:0.1 "cd $ROOT_DIR && clear && $PYTHON_CMD -u strategic_agent.py $TARGET_ALTITUDE 2>&1" C-m
 sleep 1
 
 # Pane 2: Tactical Controller (Bottom-Left)
 tmux split-window -v -t $SESSION_NAME:0.0
-tmux send-keys -t $SESSION_NAME:0.2 "cd $ROOT_DIR && clear && python3 -u tactical_controller.py 2>&1" C-m
+tmux send-keys -t $SESSION_NAME:0.2 "cd $ROOT_DIR && clear && $PYTHON_CMD -u tactical_controller.py 2>&1" C-m
 sleep 1
 
 # Pane 3: Policy Monitor (Bottom-Right)
 tmux split-window -v -t $SESSION_NAME:0.1
-tmux send-keys -t $SESSION_NAME:0.3 "cd $ROOT_DIR && clear && python3 -u tests/test_policy_live.py 2>&1" C-m
+tmux send-keys -t $SESSION_NAME:0.3 "cd $ROOT_DIR && clear && $PYTHON_CMD -u tests/test_policy_live.py 2>&1" C-m
 
 # 3. Final Polish
 tmux select-layout tiled

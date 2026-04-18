@@ -2,11 +2,16 @@ import time
 import json
 import paho.mqtt.client as mqtt
 import numpy as np
-import tflite_runtime.interpreter as tflite
-import logging
 import sys
 from collections import deque
 from drone_logging import setup_logger
+
+# --- TFLite Model Setup (Optional Import) ---
+try:
+    import tflite_runtime.interpreter as tflite
+    TFLITE_AVAILABLE = True
+except ImportError:
+    TFLITE_AVAILABLE = False
 
 # --- Configuration ---
 MQTT_BROKER = "localhost"
@@ -46,6 +51,7 @@ ai_mode_enabled = False
 cumulative_shift_x = 0.0
 cumulative_shift_y = 0.0
 last_time = time.time()
+last_sensor_update_time = 0.0
 
 # --- Smoothing Buffers ---
 # These buffers act as our "Short Term Memory" to fuse data from different sources
@@ -54,26 +60,24 @@ kinematics_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE)
 flow_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE) # Added for flow
 obstacle_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE) # Added for obstacle
 
-# --- TFLite Model Setup ---
-# try:
-#     interpreter = tflite.Interpreter(model_path="master-model.tflite")
-#     interpreter.allocate_tensors()
-#     input_details = interpreter.get_input_details()
-#     output_details = interpreter.get_output_details()
-#     logger.info("TFLite model loaded successfully.")
-# except Exception as e:
-#     logger.error(f"Failed to load TFLite model: {e}")
-#     interpreter = None
-interpreter = None # Disabled for now
+def get_smoothed_data():
+    """Calculates the average of the data in the buffers."""
+    # If we haven't received a sensor update in 1.5 seconds, data is stale.
+    if time.time() - last_sensor_update_time > 1.5:
+        return None, None
 
-# --- Helper Functions ---
-def normalize_data(raw_altitude, raw_kinematics):
-    """Normalizes raw sensor data based on defined maximums."""
-    norm_alt = np.clip(raw_altitude / MAX_ALTITUDE, 0.0, 1.0)
-    norm_roll = np.clip(raw_kinematics[0] / MAX_ANGLE, -1.0, 1.0)
-    norm_pitch = np.clip(raw_kinematics[1] / MAX_ANGLE, -1.0, 1.0)
-    norm_yaw = np.clip(raw_kinematics[2] / MAX_YAW_ANGLE, -1.0, 1.0)
-    return norm_alt, norm_roll, norm_pitch, norm_yaw
+    if not altitude_buffer:
+        return None, None 
+
+    smoothed_altitude = sum(altitude_buffer) / len(altitude_buffer)
+    
+    if flow_buffer:
+        flow_array = np.array(flow_buffer)
+        smoothed_flow = np.mean(flow_array, axis=0).tolist()
+    else:
+        smoothed_flow = [0, 0]
+    
+    return smoothed_altitude, smoothed_flow
 
 def get_dummy_action(observation):
     """Returns [norm_target_alt_strategic * 2 - 1, 0, 0, 0] as requested."""
@@ -92,27 +96,19 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 def on_message(client, userdata, msg):
     """Callback to update global state and smoothing buffers."""
-    global latest_status, altitude_buffer, kinematics_buffer, ai_mode_enabled
+    global latest_status, altitude_buffer, kinematics_buffer, flow_buffer, ai_mode_enabled, last_sensor_update_time, cumulative_shift_x, cumulative_shift_y
     try:
         payload = json.loads(msg.payload.decode())
         
         if msg.topic == SENSOR_TOPIC:
-            # --- DATA FUSION LOGIC ---
-            # We check WHICH data is in the packet and update only that buffer.
-            # This allows fc_interface (kinematics) and sensor.py (altitude/flow)
-            # to publish asynchronously without overwriting each other with zeros.
-            
+            last_sensor_update_time = time.time()
             if "altitude" in payload:
                 altitude_buffer.append(payload["altitude"])
-            
             if "kinematics" in payload:
                 kinematics_buffer.append(payload["kinematics"])
-                
             if "obstacle_distance" in payload:
                 obstacle_buffer.append(payload["obstacle_distance"])
-                
             if "flow" in payload:
-                # payload["flow"] is expected to be {'x': dx, 'y': dy}
                 flow_data = payload["flow"]
                 flow_buffer.append((flow_data.get('x', 0), flow_data.get('y', 0)))
             
@@ -131,29 +127,9 @@ def on_message(client, userdata, msg):
                 
                 # Reset accumulators on transition to ENABLED
                 if ai_mode_enabled:
-                    global cumulative_shift_x, cumulative_shift_y
                     cumulative_shift_x = 0.0
                     cumulative_shift_y = 0.0
                     logger.info("Cumulative shift reset to zero.")
-
-    except json.JSONDecodeError:
-        logger.warning(f"Could not decode JSON from topic {msg.topic}")
-
-def get_smoothed_data():
-    """Calculates the average of the data in the buffers."""
-    # We need altitude to run. Flow might be zero if stationary.
-    if not altitude_buffer:
-        return None, None 
-
-    smoothed_altitude = sum(altitude_buffer) / len(altitude_buffer)
-    
-    if flow_buffer:
-        flow_array = np.array(flow_buffer)
-        smoothed_flow = np.mean(flow_array, axis=0).tolist()
-    else:
-        smoothed_flow = [0, 0]
-    
-    return smoothed_altitude, smoothed_flow
 
 # --- Main Loop ---
 def main():
