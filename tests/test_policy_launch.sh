@@ -8,10 +8,11 @@ TARGET_ALTITUDE=${1:-0.5}
 
 # 0. Clean up ALL relevant python processes first
 echo "--- CLEANING UP ---"
-pkill -f sensors.py
-pkill -f strategic_agent.py
-pkill -f tactical_controller.py
-pkill -f test_policy_live.py
+pkill -9 -f sensors.py
+pkill -9 -f strategic_agent.py
+pkill -9 -f tactical_controller.py
+pkill -9 -f test_policy_live.py
+pkill -9 -f test_strategic_live.py
 
 # Clean up any old session
 if tmux has-session -t $SESSION_NAME 2>/dev/null; then
@@ -53,7 +54,7 @@ tmux send-keys -t $SESSION_NAME:0.3 "cd $ROOT_DIR && clear && $PYTHON_CMD -u tes
 
 # 3. Final Polish
 tmux select-layout tiled
-tmux set-option -g mouse on # Enable mouse to make pane resizing easier
+tmux set-option -g mouse on 
 
 echo "--- SESSION CREATED. ATTACHING... ---"
 sleep 2

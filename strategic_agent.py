@@ -195,7 +195,8 @@ def main():
                     norm_shift_y, 
                     norm_velocity_x, 
                     norm_velocity_y, 
-                    norm_target_alt_strategic
+                    norm_target_alt_strategic,
+                    time.time() % 60 # Rotating seconds timestamp
                 ]
                 
                 # --- 3. Action Generation (Dummy) ---

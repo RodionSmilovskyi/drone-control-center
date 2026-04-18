@@ -1,7 +1,6 @@
 import json
 import time
 import paho.mqtt.client as mqtt
-import logging
 import os
 import sys
 
@@ -17,76 +16,47 @@ COMMAND_TOPIC = "drone/commands"
 # --- Log Setup ---
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 LOG_FILE = os.path.join(SCRIPT_DIR, "test_policy_live.log")
-print(f"!!! STARTING POLICY MONITOR - LOGGING TO: {LOG_FILE} !!!")
 
-logger = logging.getLogger("PolicyMonitor")
-logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(message)s')
-
-fh = logging.FileHandler(LOG_FILE, mode='w')
-fh.setFormatter(formatter)
-logger.addHandler(fh)
-
-ch = logging.StreamHandler(sys.stdout)
-ch.setFormatter(formatter)
-logger.addHandler(ch)
-
-# Global state
-state = {
-    "observation": None,
-    "action": None,
-    "commands": None
-}
+def log(msg):
+    timestamp = time.strftime("%H:%M:%S")
+    formatted = f"{timestamp} - {msg}"
+    print(formatted)
+    with open(LOG_FILE, "a") as f:
+        f.write(formatted + "\n")
+        f.flush()
 
 def on_message(client, userdata, msg):
     try:
-        raw_payload = msg.payload.decode()
-        logger.info(f"RAW RECV | Topic: {msg.topic} | Data: {raw_payload}")
-        
-        payload = json.loads(raw_payload)
-        
-        if msg.topic == OBSERVATION_TOPIC:
-            state["observation"] = payload.get("observation")
-        elif msg.topic == TARGET_TOPIC:
-            state["action"] = payload
-        elif msg.topic == COMMAND_TOPIC:
-            state["commands"] = payload
-            
-        if state["observation"] and state["action"] and state["commands"]:
-            log_fused_state()
-            
-        # Immediate flush
-        for handler in logger.handlers:
-            handler.flush()
-            
+        topic = msg.topic
+        payload = msg.payload.decode()
+        log(f"RECV | {topic} | {payload}")
     except Exception as e:
-        logger.error(f"Error on {msg.topic}: {e}")
-
-def log_fused_state():
-    log_entry = (
-        f"\n[POLICY FUSION SUCCESS]\n"
-        f"  OBS: {state['observation']}\n"
-        f"  ACT: {state['action']}\n"
-        f"  RC : {state['commands']}\n"
-    )
-    logger.info(log_entry)
+        log(f"ERROR: {e}")
 
 def main():
+    # Clear log at start
+    with open(LOG_FILE, "w") as f:
+        f.write(f"--- TEST START {time.ctime()} ---\n")
+
+    log(f"Starting Policy Monitor. Logging to: {LOG_FILE}")
+    
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_message = on_message
     
-    client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    
-    # Subscribe to everything relevant
-    topics = [TARGET_TOPIC, OBSERVATION_TOPIC, COMMAND_TOPIC, STATUS_TOPIC, AI_MODE_TOPIC]
-    for t in topics:
-        client.subscribe(t)
-        logger.info(f"Subscribed to {t}")
+    try:
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    except Exception as e:
+        log(f"MQTT Connection Failed: {e}")
+        return
+
+    # Subscribe to ALL drone topics
+    client.subscribe("drone/#")
+    log("Subscribed to drone/#")
 
     client.loop_start()
-    time.sleep(1)
+    time.sleep(2)
     
-    logger.info("Triggering AI and Arming...")
+    log("Triggering AI and Arming...")
     client.publish(AI_MODE_TOPIC, json.dumps({"ai_enabled": True}))
     client.publish(STATUS_TOPIC, json.dumps({"armed": True}))
 
@@ -94,6 +64,7 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
+        log("Shutting down...")
         client.publish(AI_MODE_TOPIC, json.dumps({"ai_enabled": False}))
         client.publish(STATUS_TOPIC, json.dumps({"armed": False}))
         client.loop_stop()
