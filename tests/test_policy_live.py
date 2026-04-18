@@ -15,7 +15,9 @@ OBSERVATION_TOPIC = "drone/observation"
 COMMAND_TOPIC = "drone/commands"
 
 # --- Log Setup ---
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_policy_live.log")
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+LOG_FILE = os.path.join(SCRIPT_DIR, "test_policy_live.log")
+print(f"!!! STARTING POLICY MONITOR - LOGGING TO: {LOG_FILE} !!!")
 
 logger = logging.getLogger("PolicyMonitor")
 logger.setLevel(logging.INFO)
