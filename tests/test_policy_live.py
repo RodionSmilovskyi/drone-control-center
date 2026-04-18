@@ -15,13 +15,14 @@ OBSERVATION_TOPIC = "drone/observation"
 COMMAND_TOPIC = "drone/commands"
 
 # --- Log Setup ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(BASE_DIR, "test_policy_live.log")
+# Use absolute path for safety
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_policy_live.log")
 
 logger = logging.getLogger("PolicyMonitor")
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(message)s')
 
+# Clear old log and setup handlers
 fh = logging.FileHandler(LOG_FILE, mode='w')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
@@ -30,38 +31,43 @@ ch = logging.StreamHandler(sys.stdout)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-# Global state to keep track of latest data
+# Global state
 state = {
     "observation": None,
     "action": None,
-    "commands": None,
-    "updated": False
+    "commands": None
 }
 
 def on_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode())
+        topic = msg.topic
         
-        if msg.topic == OBSERVATION_TOPIC:
+        if topic == OBSERVATION_TOPIC:
             state["observation"] = payload.get("observation")
-            state["updated"] = True
-        elif msg.topic == TARGET_TOPIC:
+            logger.info(f"DEBUG: Received OBS from {topic}")
+        elif topic == TARGET_TOPIC:
             state["action"] = payload
-            state["updated"] = True
-        elif msg.topic == COMMAND_TOPIC:
+            logger.info(f"DEBUG: Received ACT from {topic}")
+        elif topic == COMMAND_TOPIC:
             state["commands"] = payload
-            state["updated"] = True
+            logger.info(f"DEBUG: Received CMD from {topic}")
             
-        # If we have all pieces and something just changed, log it!
-        if state["updated"] and state["observation"] and state["action"] and state["commands"]:
+        # Try to log fused state every time we get a command
+        if state["observation"] and state["action"] and state["commands"]:
             log_fused_state()
-            state["updated"] = False # Reset update flag
+        else:
+            missing = [k for k, v in state.items() if v is None]
+            logger.info(f"DEBUG: Waiting for: {missing}")
+
+        # Force flush to disk
+        for handler in logger.handlers:
+            handler.flush()
             
     except Exception as e:
         logger.error(f"Error decoding message on {msg.topic}: {e}")
 
 def log_fused_state():
-    """Logs OBS, ACT, and RC together in one dedicated log entry."""
     log_entry = (
         f"\n[POLICY FUSION]\n"
         f"  OBS: {state['observation']}\n"
@@ -69,8 +75,6 @@ def log_fused_state():
         f"  RC : T:{state['commands'].get('throttle')}, R:{state['commands'].get('roll')}, P:{state['commands'].get('pitch')}, Y:{state['commands'].get('yaw')}\n"
     )
     logger.info(log_entry)
-    for handler in logger.handlers:
-        handler.flush()
 
 def main():
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
@@ -82,9 +86,7 @@ def main():
         logger.error(f"Failed to connect to MQTT: {e}")
         return
 
-    client.subscribe(TARGET_TOPIC)
-    client.subscribe(OBSERVATION_TOPIC)
-    client.subscribe(COMMAND_TOPIC)
+    client.subscribe([(TARGET_TOPIC, 0), (OBSERVATION_TOPIC, 0), (COMMAND_TOPIC, 0)])
     client.loop_start()
 
     logger.info(f"--- Policy Live Monitor Started ---")
@@ -92,12 +94,13 @@ def main():
     
     time.sleep(1)
     
+    logger.info("Sending AI_MODE and ARMED signals...")
     client.publish(AI_MODE_TOPIC, json.dumps({"ai_enabled": True}))
     client.publish(STATUS_TOPIC, json.dumps({"armed": True}))
 
     try:
         while True:
-            time.sleep(0.1) # Faster loop for check
+            time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         client.publish(AI_MODE_TOPIC, json.dumps({"ai_enabled": False}))
