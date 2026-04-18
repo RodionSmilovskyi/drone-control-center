@@ -18,28 +18,24 @@ COMMAND_TOPIC = "drone/commands"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "test_policy_live.log")
 
-# Create a custom logger
 logger = logging.getLogger("PolicyMonitor")
 logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(message)s')
 
-# Create formatter
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-# File handler with immediate flush
 fh = logging.FileHandler(LOG_FILE, mode='w')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
-# Console handler
 ch = logging.StreamHandler(sys.stdout)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
 
-# Global state to keep track of latest data for fusion
+# Global state to keep track of latest data
 state = {
     "observation": None,
     "action": None,
-    "commands": None
+    "commands": None,
+    "updated": False
 }
 
 def on_message(client, userdata, msg):
@@ -48,35 +44,33 @@ def on_message(client, userdata, msg):
         
         if msg.topic == OBSERVATION_TOPIC:
             state["observation"] = payload.get("observation")
-            logger.info(f"OBS Recv: {state['observation']}")
-            
+            state["updated"] = True
         elif msg.topic == TARGET_TOPIC:
             state["action"] = payload
-            logger.info(f"ACT Recv: {state['action']}")
-            
+            state["updated"] = True
         elif msg.topic == COMMAND_TOPIC:
             state["commands"] = payload
-            logger.info(f"CMD Recv: {state['commands']}")
-            # Log the fused state whenever a new command (the final step) is received
+            state["updated"] = True
+            
+        # If we have all pieces and something just changed, log it!
+        if state["updated"] and state["observation"] and state["action"] and state["commands"]:
             log_fused_state()
+            state["updated"] = False # Reset update flag
             
     except Exception as e:
         logger.error(f"Error decoding message on {msg.topic}: {e}")
 
 def log_fused_state():
     """Logs OBS, ACT, and RC together in one dedicated log entry."""
-    # Check if we have received at least one of each (not None)
-    if state["observation"] is not None and state["action"] is not None and state["commands"] is not None:
-        log_entry = (
-            f"\n[POLICY FUSION]\n"
-            f"  OBS: {state['observation']}\n"
-            f"  ACT: Alt:{state['action'].get('target_altitude_norm')}, R:{state['action'].get('target_roll_norm')}, P:{state['action'].get('target_pitch_norm')}, Y:{state['action'].get('target_yaw_norm')}\n"
-            f"  RC : T:{state['commands'].get('throttle')}, R:{state['commands'].get('roll')}, P:{state['commands'].get('pitch')}, Y:{state['commands'].get('yaw')}\n"
-        )
-        logger.info(log_entry)
-        # Flush the file handler to ensure it writes to disk on the Pi
-        for handler in logger.handlers:
-            handler.flush()
+    log_entry = (
+        f"\n[POLICY FUSION]\n"
+        f"  OBS: {state['observation']}\n"
+        f"  ACT: Alt:{state['action'].get('target_altitude_norm')}, R:{state['action'].get('target_roll_norm')}, P:{state['action'].get('target_pitch_norm')}, Y:{state['action'].get('target_yaw_norm')}\n"
+        f"  RC : T:{state['commands'].get('throttle')}, R:{state['commands'].get('roll')}, P:{state['commands'].get('pitch')}, Y:{state['commands'].get('yaw')}\n"
+    )
+    logger.info(log_entry)
+    for handler in logger.handlers:
+        handler.flush()
 
 def main():
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
@@ -96,16 +90,14 @@ def main():
     logger.info(f"--- Policy Live Monitor Started ---")
     logger.info(f"Logging to: {LOG_FILE}")
     
-    # Give the connection a moment
     time.sleep(1)
     
-    print("Enabling AI Mode and Arming to trigger Strategic Agent...")
     client.publish(AI_MODE_TOPIC, json.dumps({"ai_enabled": True}))
     client.publish(STATUS_TOPIC, json.dumps({"armed": True}))
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(0.1) # Faster loop for check
     except KeyboardInterrupt:
         logger.info("Shutting down...")
         client.publish(AI_MODE_TOPIC, json.dumps({"ai_enabled": False}))

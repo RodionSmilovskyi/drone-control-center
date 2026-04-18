@@ -69,50 +69,47 @@ class TacticalControllerWrapper:
                 self.reset()
             return None 
 
-        # --- 1. Normalize Current State ---
-        norm_alt, norm_roll, norm_pitch, norm_yaw = self.normalize_sensor_data(sensor_data)
-        
-        # --- 2. Get Stored Normalized Target ---
-        norm_target_alt = self.latest_norm_targets.get("target_altitude_norm", 0.0)
-        norm_target_roll = self.latest_norm_targets.get("target_roll_norm", 0.0)
-        norm_target_pitch = self.latest_norm_targets.get("target_pitch_norm", 0.0)
-        norm_target_yaw = self.latest_norm_targets.get("target_yaw_norm", 0.0)
+        try:
+            # --- 1. Normalize Current State ---
+            norm_alt, norm_roll, norm_pitch, norm_yaw = self.normalize_sensor_data(sensor_data)
+            
+            # --- 2. Get Stored Normalized Target ---
+            norm_target_alt = self.latest_norm_targets.get("target_altitude_norm", 0.0)
+            norm_target_roll = self.latest_norm_targets.get("target_roll_norm", 0.0)
+            norm_target_pitch = self.latest_norm_targets.get("target_pitch_norm", 0.0)
+            norm_target_yaw = self.latest_norm_targets.get("target_yaw_norm", 0.0)
 
-        # --- 3. Calculate dt ---
-        current_time = time.time()
-        dt = current_time - self.last_compute_time
-        self.last_compute_time = current_time
-        if dt <= 0: dt = 1.0 / 100 # Avoid division by zero, default to 100Hz
+            # --- 3. Calculate dt ---
+            current_time = time.time()
+            dt = current_time - self.last_compute_time
+            self.last_compute_time = current_time
+            if dt <= 0: dt = 1.0 / 100 # Avoid division by zero, default to 100Hz
 
-        # --- 4. Call YOUR FlightController's compute method ---
-        # Prepare inputs as numpy arrays
-        # The new FlightController expects action[0] in [-1, 1] and remaps it to [0, 1]
-        action_alt_remapped = (norm_target_alt * 2.0) - 1.0
-        high_level_action = np.array([action_alt_remapped, norm_target_roll, norm_target_pitch, norm_target_yaw])
-        
-        # The new FlightController expects state_goal as [altitude, roll, pitch, yaw_rate]
-        state_goal = np.array([norm_alt, norm_roll, norm_pitch, norm_yaw]) 
-        
-        rc_values = self.fc.compute_rc_commands(high_level_action, state_goal, dt)
-        
-        logger.debug(f"PID In: TgtAlt={norm_target_alt:.2f}, CurAlt={norm_alt:.2f}")
-        logger.debug(f"PID Out: RC={rc_values}")
-        
-        # --- 5. Format and Return RC Command ---
-        # return {
-        #     "roll": int(rc_values[1]),
-        #     "pitch": int(rc_values[2]),
-        #     "throttle": int(rc_values[0]),
-        #     "yaw": int(rc_values[3]),
-        #     "aux1": 1800, "aux2": 1000 # 1800 = Armed
-        # }
-        return {
-            "roll": int(rc_values[1]),
-            "pitch": int(rc_values[2]),
-            "throttle": int(rc_values[0]),
-            "yaw": int(rc_values[3]),
-            "aux1": 1800, "aux2": 1000 # 1800 = Armed
-        }
+            # --- 4. Call YOUR FlightController's compute method ---
+            # Prepare inputs as numpy arrays
+            # The new FlightController expects action[0] in [-1, 1] and remaps it to [0, 1]
+            action_alt_remapped = (norm_target_alt * 2.0) - 1.0
+            high_level_action = np.array([action_alt_remapped, norm_target_roll, norm_target_pitch, norm_target_yaw])
+            
+            # The new FlightController expects state_goal as [altitude, roll, pitch, yaw_rate]
+            state_goal = np.array([norm_alt, norm_roll, norm_pitch, norm_yaw]) 
+            
+            rc_values = self.fc.compute_rc_commands(high_level_action, state_goal, dt)
+            
+            # logger.debug(f"PID In: TgtAlt={norm_target_alt:.2f}, CurAlt={norm_alt:.2f}")
+            # logger.debug(f"PID Out: RC={rc_values}")
+            
+            # --- 5. Format and Return RC Command ---
+            return {
+                "roll": int(rc_values[1]),
+                "pitch": int(rc_values[2]),
+                "throttle": int(rc_values[0]),
+                "yaw": int(rc_values[3]),
+                "aux1": 1800, "aux2": 1000 # 1800 = Armed
+            }
+        except Exception as e:
+            logger.error(f"Error in compute_rc_commands: {e}")
+            return None
 
 # --- MQTT Callbacks ---
 def on_connect(client, userdata, flags, reason_code, properties):
