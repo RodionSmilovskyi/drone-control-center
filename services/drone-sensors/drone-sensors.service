@@ -1,0 +1,15 @@
+[Unit]
+Description=Drone Sensors Service
+After=network.target
+
+[Service]
+Type=simple
+User=rodion
+WorkingDirectory=/home/rodion/drone
+EnvironmentFile=/home/rodion/projects/drone/.env
+ExecStart=/usr/bin/python3 services/drone-sensors/sensor.py
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
