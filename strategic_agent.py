@@ -131,6 +131,11 @@ def on_message(client, userdata, msg):
                     cumulative_shift_y = 0.0
                     logger.info("Cumulative shift reset to zero.")
 
+    except json.JSONDecodeError:
+        logger.warning(f"Could not decode JSON from topic {msg.topic}")
+    except Exception as e:
+        logger.error(f"Error in on_message: {e}")
+
 # --- Main Loop ---
 def main():
     global cumulative_shift_x, cumulative_shift_y, last_time
