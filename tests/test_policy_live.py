@@ -7,61 +7,83 @@ import sys
 # --- Configuration ---
 MQTT_BROKER = "127.0.0.1"
 MQTT_PORT = 1883
+LOG_FILE = "/home/rodion/drone/tests/test_policy_live.log"
 
-# --- Log Setup ---
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-LOG_FILE = os.path.join(SCRIPT_DIR, "test_policy_live.log")
+# Internal State to hold the latest fragments
+state = {
+    "obs": None,
+    "act": None,
+    "cmd": None
+}
 
 def log_msg(text):
     formatted = f"{time.strftime('%H:%M:%S')} | {text}"
+    print(formatted)
     with open(LOG_FILE, "a") as f:
         f.write(formatted + "\n")
         f.flush()
 
-state = {"obs": None, "act": None, "cmd": None}
+def on_connect(client, userdata, flags, rc):
+    client.subscribe("drone/#")
 
 def on_message(client, userdata, msg):
     global state
     topic = msg.topic
     try:
-        raw = msg.payload.decode()
-        # SUPER VERBOSE: Log every single packet seen on the network
-        log_msg(f"NETWORK | {topic} | {raw}")
-        
-        payload = json.loads(raw)
+        payload = json.loads(msg.payload.decode())
         
         if topic == "drone/observation":
             state["obs"] = payload.get("observation")
         elif topic == "drone/target_setpoints":
-            state["act"] = payload
+            state["act"] = [
+                payload.get("target_altitude_norm"),
+                payload.get("target_roll_norm"),
+                payload.get("target_pitch_norm"),
+                payload.get("target_yaw_norm")
+            ]
         elif topic == "drone/commands":
-            state["cmd"] = payload
+            state["cmd"] = [
+                payload.get("throttle"),
+                payload.get("roll"),
+                payload.get("pitch"),
+                payload.get("yaw")
+            ]
+            # Use Command arrival as the trigger for a fused row
+            log_compact_row()
             
     except Exception as e:
-        log_msg(f"DECODE ERROR on {topic}: {e}")
+        pass
+
+def log_compact_row():
+    # Only log if we have at least one valid sample for each
+    if state["obs"] is not None and state["act"] is not None and state["cmd"] is not None:
+        # Elements are: [OBS] | [ACT] | [RC]
+        obs_str = f"OBS:{state['obs']}"
+        act_str = f"ACT:{state['act']}"
+        cmd_str = f"CMD:{state['cmd']}"
+        log_msg(f"FUSED | {obs_str} | {act_str} | {cmd_str}")
 
 def main():
-    # Kill old log
     with open(LOG_FILE, "w") as f:
-        f.write(f"--- SUPER VERBOSE LOG START: {time.ctime()} ---\n")
+        f.write(f"--- COMPACT FUSED LOG START: {time.ctime()} ---\n")
 
-    client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    # Use v1 API for maximum compatibility on Pi
+    client = mqtt.Client(client_id="compact_monitor", clean_session=True)
+    client.on_connect = on_connect
     client.on_message = on_message
     
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        # Subscribe to EVERYTHING to see where the data is leaking
-        client.subscribe("#") 
         client.loop_start()
     except Exception as e:
         print(f"MQTT FAIL: {e}")
         return
 
-    print(f"Passive Network Monitor Running. Target: {LOG_FILE}")
+    print(f"Compact Monitor Running. Log: {LOG_FILE}")
 
     try:
         while True:
-            # Re-publish triggers just in case
+            # Continuously pulse triggers
             client.publish("drone/ai_mode", json.dumps({"ai_enabled": True}))
             client.publish("drone/status", json.dumps({"armed": True}))
             
