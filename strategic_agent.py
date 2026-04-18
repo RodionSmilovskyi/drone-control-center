@@ -2,6 +2,7 @@ import time
 import json
 import paho.mqtt.client as mqtt
 import numpy as np
+import logging
 import sys
 from collections import deque
 from drone_logging import setup_logger
