@@ -2,6 +2,7 @@ import json
 import time
 import paho.mqtt.client as mqtt
 import os
+import sys
 
 # --- Configuration ---
 MQTT_BROKER = "127.0.0.1"
@@ -13,7 +14,7 @@ LOG_FILE = os.path.join(SCRIPT_DIR, "test_policy_live.log")
 
 def log_msg(text):
     formatted = f"{time.strftime('%H:%M:%S')} | {text}"
-    # Note: We don't print to console here to keep the heartbeat clean
+    # Keep console clean, only write to file
     with open(LOG_FILE, "a") as f:
         f.write(formatted + "\n")
         f.flush()
@@ -24,54 +25,70 @@ def on_message(client, userdata, msg):
     global state
     topic = msg.topic
     try:
-        payload = json.loads(msg.payload.decode())
+        raw = msg.payload.decode()
+        # TRY to parse, but don't crash if it's weird
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = {"raw": raw} # Fallback
+        
         if topic == "drone/observation":
             state["obs"] = payload.get("observation")
         elif topic == "drone/target_setpoints":
-            state["act"] = [payload.get("target_altitude_norm"), 0, 0, 0]
+            # Just store the raw dict for flexibility
+            state["act"] = payload
         elif topic == "drone/commands":
-            state["cmd"] = [payload.get("throttle"), payload.get("roll"), payload.get("pitch"), payload.get("yaw")]
+            # Just store the raw dict
+            state["cmd"] = payload
             
+        # Log if we have all pieces
         if state["obs"] and state["act"] and state["cmd"]:
             log_compact_row()
+            
     except Exception as e:
-        pass
+        print(f"\nMONITOR ERROR on {topic}: {e}")
 
 def log_compact_row():
-    # Write to the file
-    log_msg(f"FUSED | OBS:{state['obs']} | ACT:{state['act']} | CMD:{state['cmd']}")
+    # Use .get to be safe against different payload formats
+    act = state["act"]
+    cmd = state["cmd"]
+    obs = state["obs"]
+    
+    # Compact string for the log file
+    row = f"FUSED | OBS:{obs} | ACT:[{act.get('target_altitude_norm')},{act.get('target_roll_norm')},{act.get('target_pitch_norm')}] | RC:[{cmd.get('throttle')},{cmd.get('roll')},{cmd.get('pitch')}]"
+    log_msg(row)
 
 def main():
     with open(LOG_FILE, "w") as f:
-        f.write(f"--- COMPACT MONITOR START: {time.ctime()} ---\n")
+        f.write(f"--- SESSION START: {time.ctime()} ---\n")
 
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_message = on_message
     
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.subscribe("drone/#")
+        # Subscribe individually to ensure registration
+        client.subscribe("drone/observation")
+        client.subscribe("drone/target_setpoints")
+        client.subscribe("drone/commands")
         client.loop_start()
     except Exception as e:
         print(f"MQTT FAIL: {e}")
         return
 
-    print(f"Starting Compact Monitor. Log: {LOG_FILE}")
-    print("Will continuously send signals every 2s...")
+    print(f"Compact Monitor Running. Target: {LOG_FILE}")
 
     try:
         while True:
-            # Re-publish signals to catch any late-starting services
+            # Continuously pulse the triggers
             client.publish("drone/ai_mode", json.dumps({"ai_enabled": True}))
             client.publish("drone/status", json.dumps({"armed": True}))
             
-            # Print a compact summary of what we have so far
-            obs_pulse = state["obs"][6] if (state["obs"] and len(state["obs"]) > 6) else "Wait"
-            print(f"\rPulse:{obs_pulse} | OBS:{'OK' if state['obs'] else 'Wait'} | ACT:{'OK' if state['act'] else 'Wait'} | CMD:{'OK' if state['cmd'] else 'Wait'}", end="")
-            
-            time.sleep(2)
+            p = state["obs"][6] if (state["obs"] and len(state["obs"]) > 6) else "?"
+            print(f"\rPulse:{p} | OBS:{'OK' if state['obs'] else '-'} | ACT:{'OK' if state['act'] else '-'} | CMD:{'OK' if state['cmd'] else '-'}", end="")
+            sys.stdout.flush()
+            time.sleep(1)
     except KeyboardInterrupt:
-        client.publish("drone/ai_mode", json.dumps({"ai_enabled": False}))
         client.loop_stop()
 
 if __name__ == "__main__":
