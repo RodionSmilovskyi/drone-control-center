@@ -54,12 +54,12 @@ last_sensor_update_time = 0.0
 
 # Buffers
 altitude_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE)
-kinematics_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE)
 flow_buffer = deque(maxlen=SMOOTHING_WINDOW_SIZE)
 
 def on_connect(client, userdata, flags, rc, properties):
-    logger.info(f"Connected to MQTT with code {rc}")
+    logger.info(f"MQTT Connected. Code: {rc}")
     client.subscribe([(SENSOR_TOPIC, 0), (STATUS_TOPIC, 0), (AI_MODE_TOPIC, 0)])
+    print(f"!!! AGENT CONNECTED TO BROKER !!!")
 
 def on_message(client, userdata, msg):
     global latest_status, ai_mode_enabled, last_sensor_update_time
@@ -84,29 +84,35 @@ def on_message(client, userdata, msg):
                     cumulative_shift_x, cumulative_shift_y = 0.0, 0.0
                     logger.info("AI Enabled - Shift Reset")
     except Exception as e:
-        logger.error(f"MQTT Error: {e}")
+        logger.error(f"MQTT Msg Error: {e}")
 
 def get_smoothed_data():
-    if time.time() - last_sensor_update_time > 2.0:
-        return None, None
+    now = time.time()
+    if now - last_sensor_update_time > 2.0:
+        return None, None, f"STALE ({now - last_sensor_update_time:.1f}s)"
     if not altitude_buffer:
-        return None, None
+        return None, None, "EMPTY_BUFFER"
     
     avg_alt = sum(altitude_buffer) / len(altitude_buffer)
     avg_flow = np.mean(list(flow_buffer), axis=0).tolist() if flow_buffer else [0, 0]
-    return avg_alt, avg_flow
+    return avg_alt, avg_flow, "OK"
 
 def main():
     global cumulative_shift_x, cumulative_shift_y
     last_time = time.time()
+    last_heartbeat = 0
     
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
     client.on_message = on_message
-    client.connect(MQTT_BROKER, MQTT_PORT, 60)
-    client.loop_start()
+    
+    try:
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    except Exception as e:
+        print(f"CRITICAL: MQTT Connection Failed: {e}")
+        return
 
-    logger.info(f"Strategic Agent Active. Target Alt: {TARGET_ALTITUDE}m")
+    client.loop_start()
 
     while True:
         try:
@@ -115,7 +121,12 @@ def main():
             last_time = loop_start
 
             armed = latest_status.get("armed", False)
-            alt, flow = get_smoothed_data()
+            alt, flow, status_msg = get_smoothed_data()
+
+            # Heartbeat (once per second)
+            if loop_start - last_heartbeat > 1.0:
+                print(f"HEARTBEAT | AI:{ai_mode_enabled} | Armed:{armed} | Sensors:{status_msg} | Alt:{alt}")
+                last_heartbeat = loop_start
 
             if ai_mode_enabled and armed and alt is not None:
                 # Physics
@@ -124,7 +135,7 @@ def main():
                 cumulative_shift_x += vx * dt
                 cumulative_shift_y += vy * dt
 
-                # Observation (7 elements now)
+                # Observation (7 elements)
                 obs = [
                     np.clip(alt / MAX_ALTITUDE, 0, 1),
                     np.clip(cumulative_shift_x / MAX_XY_SHIFT, -1, 1),
@@ -132,7 +143,7 @@ def main():
                     np.clip(vx / MAX_VELOCITY, -1, 1),
                     np.clip(vy / MAX_VELOCITY, -1, 1),
                     TARGET_ALTITUDE / MAX_ALTITUDE,
-                    time.time() % 60 # Prove it's alive!
+                    time.time() % 60 
                 ]
 
                 # Actions
@@ -145,9 +156,7 @@ def main():
 
                 client.publish(TARGET_TOPIC, json.dumps(targets))
                 client.publish(OBSERVATION_TOPIC, json.dumps({"observation": [round(float(x), 4) for x in obs]}))
-                logger.debug(f"Loop OK. Alt: {alt:.2f}, Shift: ({cumulative_shift_x:.2f}, {cumulative_shift_y:.2f})")
             
-            # Control loop frequency
             elapsed = time.time() - loop_start
             if elapsed < LOOP_TIME:
                 time.sleep(LOOP_TIME - elapsed)
@@ -155,7 +164,7 @@ def main():
         except KeyboardInterrupt:
             break
         except Exception as e:
-            logger.error(f"Loop Error: {e}")
+            print(f"LOOP ERROR: {e}")
             time.sleep(1)
 
 if __name__ == "__main__":
