@@ -67,6 +67,9 @@ class TacticalControllerWrapper:
         if not self.is_armed or not self.ai_mode_enabled or self.latest_norm_targets is None:
             if not self.is_armed:
                 self.reset()
+            # Log the reason for None once every 2 seconds to avoid spam
+            if time.time() % 2 < 0.1:
+                logger.debug(f"Waiting for: Armed={self.is_armed}, AI={self.ai_mode_enabled}, Targets={self.latest_norm_targets is not None}")
             return None 
 
         try:
