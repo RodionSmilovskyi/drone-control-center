@@ -3,8 +3,8 @@
 SESSION_NAME="policy_test"
 TARGET_ALTITUDE=${1:-0.5}
 
-# 0. Clean up EVERY relevant python script
-echo "Cleaning up all drone processes..."
+# 0. AGGRESSIVE CLEANUP
+echo "Cleaning up all old scripts..."
 pkill -9 -f sensors.py
 pkill -9 -f strategic_agent.py
 pkill -9 -f tactical_controller.py
@@ -31,7 +31,7 @@ tmux split-window -h
 tmux split-window -v -t 0
 tmux split-window -v -t 1
 
-# 3. Start Services with explicit CD and absolute script paths
+# 3. Start Services with explicit CD and absolute paths
 # Pane 0: Sensors (Top-Left)
 tmux send-keys -t 0 "cd $ROOT_DIR && $PYTHON_CMD -u sensors.py" C-m
 
@@ -41,7 +41,8 @@ tmux send-keys -t 1 "cd $ROOT_DIR && $PYTHON_CMD -u strategic_agent.py $TARGET_A
 # Pane 2: Tactical Controller (Bottom-Left)
 tmux send-keys -t 2 "cd $ROOT_DIR && $PYTHON_CMD -u tactical_controller.py" C-m
 
-# Pane 3: NEW RAW MONITOR (Bottom-Right)
+# Pane 3: THE CORRECT MONITOR (Bottom-Right)
+# We use the absolute path to be 100% sure we run the right file
 tmux send-keys -t 3 "cd $ROOT_DIR && $PYTHON_CMD -u tests/test_policy_live.py" C-m
 
 # 4. Finish
