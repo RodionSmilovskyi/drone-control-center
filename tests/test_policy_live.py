@@ -8,58 +8,48 @@ MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
 
 # --- Log Setup ---
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-LOG_FILE = os.path.join(SCRIPT_DIR, "test_policy_live.log")
+# Use an absolute path that works on the Pi
+LOG_FILE = "/home/rodion/drone/tests/test_policy_live.log"
 
-def log(msg):
+def log_to_file(msg):
     with open(LOG_FILE, "a") as f:
-        f.write(f"{time.strftime('%H:%M:%S')} - {msg}\n")
-
-# Global variables to track the "pulse"
-last_obs = None
-last_act = None
-last_cmd = None
+        f.write(f"{time.strftime('%H:%M:%S')} | {msg}\n")
+        f.flush()
 
 def on_message(client, userdata, msg):
-    global last_obs, last_act, last_cmd
     try:
-        payload = json.loads(msg.payload.decode())
-        
-        if msg.topic == "drone/observation":
-            last_obs = payload.get("observation")
-        elif msg.topic == "drone/target_setpoints":
-            last_act = payload
-        elif msg.topic == "drone/commands":
-            last_cmd = payload
-            
-        # Every time we get a command, print a summary to the console
-        if last_obs and last_act and last_cmd:
-            # The 7th element of OBS is our moving timestamp
-            pulse = last_obs[6] if len(last_obs) > 6 else 0
-            
-            # Clear line and print high-visibility summary
-            print(f"\r[PULSE:{pulse:4.1f}] ALT:{last_obs[0]:.2f} -> TGT:{last_act['target_altitude_norm']:.1f} -> THR:{last_cmd['throttle']}", end="")
-            
-            # Log full details to file
-            log(f"FUSION | OBS:{last_obs} | ACT:{last_act} | CMD:{last_cmd}")
-            
+        topic = msg.topic
+        data = msg.payload.decode()
+        # Print to console for immediate feedback
+        print(f"RECV: {topic}")
+        # Log to file for deep analysis
+        log_to_file(f"{topic} | {data}")
     except Exception as e:
-        pass
+        print(f"Error: {e}")
 
 def main():
-    print(f"!!! POLICY MONITOR STARTING !!!")
-    print(f"Logging full history to: {LOG_FILE}")
+    print(f"--- STARTING RAW POLICY MONITOR ---")
+    print(f"LOGGING EVERY MESSAGE TO: {LOG_FILE}")
     
+    # Initialize log
     with open(LOG_FILE, "w") as f:
-        f.write("--- NEW TEST SESSION ---\n")
+        f.write(f"--- SESSION START: {time.ctime()} ---\n")
 
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_message = on_message
-    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    
+    try:
+        client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    except Exception as e:
+        print(f"MQTT FAILED: {e}")
+        return
+
     client.subscribe("drone/#")
     client.loop_start()
 
-    time.sleep(1)
+    # Trigger the system
+    time.sleep(2)
+    print("SENDING AI_ENABLE AND ARMED...")
     client.publish("drone/ai_mode", json.dumps({"ai_enabled": True}))
     client.publish("drone/status", json.dumps({"armed": True}))
 

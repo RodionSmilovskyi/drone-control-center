@@ -3,12 +3,13 @@
 SESSION_NAME="policy_test"
 TARGET_ALTITUDE=${1:-0.5}
 
-# 0. Clean up ALL relevant python processes first
-echo "Cleaning up..."
+# 0. Clean up EVERY relevant python script
+echo "Cleaning up all drone processes..."
 pkill -9 -f sensors.py
 pkill -9 -f strategic_agent.py
 pkill -9 -f tactical_controller.py
 pkill -9 -f test_policy_live.py
+pkill -9 -f test_strategic_live.py
 
 # Clean up any old session
 if tmux has-session -t $SESSION_NAME 2>/dev/null; then
@@ -30,7 +31,7 @@ tmux split-window -h
 tmux split-window -v -t 0
 tmux split-window -v -t 1
 
-# 3. Start Services with explicit CD
+# 3. Start Services with explicit CD and absolute script paths
 # Pane 0: Sensors (Top-Left)
 tmux send-keys -t 0 "cd $ROOT_DIR && $PYTHON_CMD -u sensors.py" C-m
 
@@ -40,7 +41,7 @@ tmux send-keys -t 1 "cd $ROOT_DIR && $PYTHON_CMD -u strategic_agent.py $TARGET_A
 # Pane 2: Tactical Controller (Bottom-Left)
 tmux send-keys -t 2 "cd $ROOT_DIR && $PYTHON_CMD -u tactical_controller.py" C-m
 
-# Pane 3: Policy Monitor (Bottom-Right)
+# Pane 3: NEW RAW MONITOR (Bottom-Right)
 tmux send-keys -t 3 "cd $ROOT_DIR && $PYTHON_CMD -u tests/test_policy_live.py" C-m
 
 # 4. Finish
