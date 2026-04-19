@@ -97,11 +97,17 @@ def get_smoothed_data():
     avg_flow = np.mean(list(flow_buffer), axis=0).tolist() if flow_buffer else [0, 0]
     return avg_alt, avg_flow, "OK"
 
+from core.shared_memory_manager import SharedMemoryManager
+
 def main():
-    global cumulative_shift_x, cumulative_shift_y
+    global cumulative_shift_x, cumulative_shift_y, last_heartbeat
     last_time = time.time()
     last_heartbeat = 0
     
+    shm_name = "drone_sensor_data"
+    shm_size = 6 * 8
+    shm_mgr = None
+
     client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
     client.on_message = on_message
@@ -120,8 +126,30 @@ def main():
             dt = loop_start - last_time
             last_time = loop_start
 
+            # 1. Read from SHM instead of buffers
+            if shm_mgr is None:
+                try:
+                    shm_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
+                except:
+                    shm_mgr = None
+            
+            # Values from SHM: [alt, sx, sy, vx_norm, vy_norm, heartbeat]
+            alt, sx, sy, vx_norm, vy_norm = None, None, None, None, None
+            status_msg = "DISCONNECTED"
+            if shm_mgr:
+                try:
+                    data = shm_mgr.read_array(np.float64, (6,))
+                    heartbeat = data[5]
+                    if (time.time() - heartbeat) < 1.0:
+                        alt, sx, sy, vx_norm, vy_norm = data[0], data[1], data[2], data[3], data[4]
+                        status_msg = "OK"
+                    else:
+                        status_msg = "STALE"
+                except:
+                    shm_mgr.close()
+                    shm_mgr = None
+            
             armed = latest_status.get("armed", False)
-            alt, flow, status_msg = get_smoothed_data()
 
             # Heartbeat (once per second)
             if loop_start - last_heartbeat > 1.0:
@@ -129,19 +157,13 @@ def main():
                 last_heartbeat = loop_start
 
             if ai_mode_enabled and armed and alt is not None:
-                # Physics
-                vx = (flow[0] * alt * FLOW_SCALAR) / dt if dt > 0 else 0
-                vy = (flow[1] * alt * FLOW_SCALAR) / dt if dt > 0 else 0
-                cumulative_shift_x += vx * dt
-                cumulative_shift_y += vy * dt
-
-                # Observation (7 elements)
+                # Observation (7 elements) - Using values directly from SHM
                 obs = [
                     np.clip(alt / MAX_ALTITUDE, 0, 1),
-                    np.clip(cumulative_shift_x / MAX_XY_SHIFT, -1, 1),
-                    np.clip(cumulative_shift_y / MAX_XY_SHIFT, -1, 1),
-                    np.clip(vx / MAX_VELOCITY, -1, 1),
-                    np.clip(vy / MAX_VELOCITY, -1, 1),
+                    np.clip(sx / MAX_XY_SHIFT, -1, 1),
+                    np.clip(sy / MAX_XY_SHIFT, -1, 1),
+                    np.clip(vx_norm, -1, 1),
+                    np.clip(vy_norm, -1, 1),
                     TARGET_ALTITUDE / MAX_ALTITUDE,
                     time.time() % 60 
                 ]

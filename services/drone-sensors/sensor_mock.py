@@ -22,7 +22,7 @@ class SensorMock:
         
         # Add a bit of noise
         noise = lambda: random.uniform(-0.02, 0.02)
-        
+
         return [
             max(0.0, min(1.0, altitude + noise())),
             max(-1.0, min(1.0, shift_x + noise())),

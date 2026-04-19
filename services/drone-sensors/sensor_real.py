@@ -82,15 +82,13 @@ class SensorReal:
             self.altitude = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 1000.0))
             self.sensor_down.clear_interrupt()
 
+        dx, dy = 0, 0
         vel_x_norm, vel_y_norm = 0.0, 0.0
         if self.flow:
             try:
                 dx, dy = self.flow.get_motion()
                 
                 # Physics calculation as done in strategic_agent.py:
-                # vx = (dx * alt * FLOW_SCALAR) / dt
-                # shift_x += vx * dt  =>  shift_x += dx * alt * FLOW_SCALAR
-                
                 d_shift_x = dx * self.altitude * self.FLOW_SCALAR
                 d_shift_y = dy * self.altitude * self.FLOW_SCALAR
                 

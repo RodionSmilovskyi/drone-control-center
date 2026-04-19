@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from core.shared_memory_manager import SharedMemoryManager
 
 DRONE_ENV = os.environ.get("DRONE_ENV", "PI")
+
 print(f"DEBUG: DRONE_ENV is '{DRONE_ENV}'")
 
 if DRONE_ENV == "WSL":
@@ -25,12 +26,12 @@ else:
 def main():
     provider = SensorProvider()
     
+    # SHM structure: [alt, sx, sy, vx, vy, heartbeat] (6 floats)
     shm_size = 6 * 8 
     shm_name = "drone_sensor_data"
     
-    # Pre-emptive cleanup to avoid FileExistsError or stale segments
+    # Pre-emptive cleanup
     try:
-        # Use a raw shared_memory check for cleanup to avoid complexity
         from multiprocessing import shared_memory
         existing = shared_memory.SharedMemory(name=shm_name)
         existing.close()
@@ -49,18 +50,28 @@ def main():
         shm_mgr.unlink()
         sys.exit(0)
 
-    # Register signals for graceful shutdown (SIGTERM for systemd, SIGINT for Ctrl+C)
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
 
     print(f"Sensor service started in {DRONE_ENV} mode. Writing to SHM: {shm_name}")
     try:
         while True:
-            data = provider.read()
-            # Heartbeat at index 5
-            data.append(time.time())
-            array_data = np.array(data, dtype=np.float64)
+            # provider.read() returns [altitude, shift_x, shift_y, vel_x, vel_y] (5 values)
+            raw_data = provider.read()
+            
+            # Pack into SHM: [alt, sx, sy, vx, vy, heartbeat]
+            shm_data = [
+                raw_data[0], # alt
+                raw_data[1], # sx
+                raw_data[2], # sy
+                raw_data[3], # vx
+                raw_data[4], # vy
+                time.time()  # heartbeat
+            ]
+            
+            array_data = np.array(shm_data, dtype=np.float64)
             shm_mgr.write_array(array_data)
+            
             time.sleep(1/30.0) # 30Hz
     except Exception as e:
         print(f"Error in sensor loop: {e}")

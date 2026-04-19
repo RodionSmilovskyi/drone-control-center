@@ -26,6 +26,8 @@ COMMAND_TOPIC = "drone/commands" # Publishes REAL RC commands
 # --- Setup Logger ---
 logger = setup_logger("Tactical_Controller", LOG_FILE, logging.DEBUG)
 
+from core.shared_memory_manager import SharedMemoryManager
+
 # --- Controller State ---
 class TacticalControllerWrapper:
     def __init__(self):
@@ -37,6 +39,28 @@ class TacticalControllerWrapper:
         self.is_armed = False
         self.ai_mode_enabled = False
         self.last_compute_time = time.time()
+        
+        # --- SHM for sensors ---
+        self.shm_name = "drone_sensor_data"
+        self.shm_size = 6 * 8
+        self.shm_mgr = None
+
+    def get_shm_altitude(self):
+        if self.shm_mgr is None:
+            try:
+                self.shm_mgr = SharedMemoryManager(self.shm_name, self.shm_size, create=False)
+            except:
+                return 0.0
+        try:
+            data = self.shm_mgr.read_array(np.float64, (6,))
+            heartbeat = data[5]
+            if (time.time() - heartbeat) < 1.0:
+                return data[0] # altitude
+        except:
+            if self.shm_mgr:
+                self.shm_mgr.close()
+            self.shm_mgr = None
+        return 0.0
 
     def reset(self):
         """Resets the underlying PID controllers."""
@@ -50,7 +74,7 @@ class TacticalControllerWrapper:
 
     def normalize_sensor_data(self, sensor_data):
         """Normalizes raw sensor data for the FlightController class."""
-        raw_altitude = sensor_data.get("altitude", 0.0)
+        raw_altitude = self.get_shm_altitude()
         raw_kinematics = sensor_data.get("kinematics", [0, 0, 0])
         
         norm_alt = np.clip(raw_altitude / MAX_ALTITUDE, 0.0, 1.0)
