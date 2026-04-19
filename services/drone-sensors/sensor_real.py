@@ -118,7 +118,7 @@ class SensorReal:
                         if abs(dx) <= self.FLOW_DEADBAND: dx = 0
                         if abs(dy) <= self.FLOW_DEADBAND: dy = 0
 
-                        if new_alt > 0.05:
+                        if new_alt > 0.08: # Increased to 8cm to respect PMW3901 minimum focus
                             d_shift_x = dx * new_alt * self.FLOW_SCALAR
                             d_shift_y = dy * new_alt * self.FLOW_SCALAR
                             
@@ -132,14 +132,13 @@ class SensorReal:
                                     self.vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
                                     self.vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
                         else:
-                            # Below threshold (landed or too close), reset velocity
+                            # Below focus threshold (landed or too close)
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
-                                # If definitively on ground, reset shifts
-                                if new_alt < 0.02:
-                                    self.shift_x = 0.0
-                                    self.shift_y = 0.0
+                                # Treat anything below the focus threshold as "grounded"
+                                self.shift_x = 0.0
+                                self.shift_y = 0.0
                         
                         new_vx_norm = self.vel_x_norm
                         new_vy_norm = self.vel_y_norm
