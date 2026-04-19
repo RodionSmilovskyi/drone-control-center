@@ -23,7 +23,7 @@ SPI_CS_PIN = 8
 
 class SensorReal:
     def __init__(self):
-        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.DEBUG)
+        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.INFO)
         self.sensor_down = None
         self.flow = None
         
@@ -116,9 +116,6 @@ class SensorReal:
                         if abs(dx) <= self.FLOW_DEADBAND: dx = 0
                         if abs(dy) <= self.FLOW_DEADBAND: dy = 0
 
-                        if dx != 0 or dy != 0:
-                            self.logger.debug(f"Motion: dx={dx}, dy={dy}, alt={new_alt:.3f}")
-
                         if new_alt > 0.05:
                             d_shift_x = dx * new_alt * self.FLOW_SCALAR
                             d_shift_y = dy * new_alt * self.FLOW_SCALAR
@@ -126,9 +123,6 @@ class SensorReal:
                             with self.lock:
                                 self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
                                 self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
-                                
-                                if dx != 0 or dy != 0:
-                                    self.logger.debug(f"Shift Updated: X={self.shift_x:.3f}, Y={self.shift_y:.3f}")
                                 
                                 if dt > 0:
                                     vx_phys = d_shift_x / dt
@@ -141,7 +135,7 @@ class SensorReal:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
                                 # If definitively on ground, reset shifts
-                                if new_alt < 0.04:
+                                if new_alt < 0.02:
                                     self.shift_x = 0.0
                                     self.shift_y = 0.0
                         
