@@ -41,6 +41,8 @@ class SensorReal:
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
         self.FLOW_DEADBAND = 0 # No deadband for now
+        self.ALPHA_VEL = 0.3   # 0.0 = max smooth, 1.0 = raw (fast)
+        self.ALPHA_SHIFT = 0.6 # 0.0 = max smooth, 1.0 = raw (fast)
         
         self.lock = threading.Lock()
         self._init_hardware()
@@ -118,19 +120,29 @@ class SensorReal:
                         if abs(dx) <= self.FLOW_DEADBAND: dx = 0
                         if abs(dy) <= self.FLOW_DEADBAND: dy = 0
 
-                        if new_alt > 0.08: # Increased to 8cm to respect PMW3901 minimum focus
+                        if new_alt > 0.08:
+                            # Raw shift deltas
                             d_shift_x = dx * new_alt * self.FLOW_SCALAR
                             d_shift_y = dy * new_alt * self.FLOW_SCALAR
                             
                             with self.lock:
-                                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
-                                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
+                                # 1. Smooth the Shifts
+                                target_shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
+                                target_shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
                                 
+                                self.shift_x = (self.ALPHA_SHIFT * target_shift_x) + ((1.0 - self.ALPHA_SHIFT) * self.shift_x)
+                                self.shift_y = (self.ALPHA_SHIFT * target_shift_y) + ((1.0 - self.ALPHA_SHIFT) * self.shift_y)
+                                
+                                # 2. Calculate and Smooth the Velocities
                                 if dt > 0:
                                     vx_phys = d_shift_x / dt
                                     vy_phys = d_shift_y / dt
-                                    self.vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
-                                    self.vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
+                                    
+                                    raw_vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
+                                    raw_vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
+                                    
+                                    self.vel_x_norm = (self.ALPHA_VEL * raw_vel_x_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
+                                    self.vel_y_norm = (self.ALPHA_VEL * raw_vel_y_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
                         else:
                             # Below focus threshold (landed or too close)
                             with self.lock:
