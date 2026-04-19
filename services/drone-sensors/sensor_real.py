@@ -35,14 +35,17 @@ class SensorReal:
         self.vel_y_norm = 0.0
         self.last_time = time.time()
         
-        # Normalization constants (matching strategic_agent.py)
-        self.FLOW_SCALAR = 1.14
+        # Normalization and Calibration
+        self.FLOW_SCALAR = 0.05
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
-        self.FLOW_DEADBAND = 0 # No deadband for now
-        self.ALPHA_VEL = 0.3   # 0.0 = max smooth, 1.0 = raw (fast)
-        self.ALPHA_SHIFT = 0.6 # 0.0 = max smooth, 1.0 = raw (fast)
+        self.FLOW_DEADBAND = 1 # Ignore tiny jitter
+        
+        # Smoothing (Exponential Moving Average)
+        self.ALPHA_ALT = 0.3 # Smoothing for altitude
+        self.ALPHA_VEL = 0.2 # Heavier smoothing for velocity
+        self.ALPHA_SHIFT = 0.5 # Moderate smoothing for shift
         
         self.lock = threading.Lock()
         self._init_hardware()
@@ -102,7 +105,9 @@ class SensorReal:
                     if self.sensor_down.data_ready:
                         raw_dist = self.sensor_down.distance
                         if raw_dist is not None:
-                            new_alt = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 100.0))
+                            target_alt = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 100.0))
+                            # Smooth Altitude
+                            new_alt = (self.ALPHA_ALT * target_alt) + ((1.0 - self.ALPHA_ALT) * new_alt)
                         self.sensor_down.clear_interrupt()
                 except Exception:
                     pass
@@ -110,47 +115,42 @@ class SensorReal:
             # 2. Optical Flow Reading
             if self.flow:
                 try:
-                    # This call might block if tracking is lost
                     motion = self.flow.get_motion()
-                    # Only integrate if warmed up and above 5cm altitude (focus threshold)
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
-                        # Apply deadband to filter noise
+                        # Apply deadband
                         if abs(dx) <= self.FLOW_DEADBAND: dx = 0
                         if abs(dy) <= self.FLOW_DEADBAND: dy = 0
 
-                        if new_alt > 0.08:
-                            # Raw shift deltas
+                        if new_alt > 0.05:
+                            # Scalar is multiplied by altitude because flow magnitude increases with distance
                             d_shift_x = dx * new_alt * self.FLOW_SCALAR
                             d_shift_y = dy * new_alt * self.FLOW_SCALAR
                             
                             with self.lock:
-                                # 1. Smooth the Shifts
-                                target_shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
-                                target_shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
+                                # Update and Smooth Shifts
+                                self.shift_x = (self.ALPHA_SHIFT * (self.shift_x + d_shift_x)) + ((1.0 - self.ALPHA_SHIFT) * self.shift_x)
+                                self.shift_y = (self.ALPHA_SHIFT * (self.shift_y + d_shift_y)) + ((1.0 - self.ALPHA_SHIFT) * self.shift_y)
                                 
-                                self.shift_x = (self.ALPHA_SHIFT * target_shift_x) + ((1.0 - self.ALPHA_SHIFT) * self.shift_x)
-                                self.shift_y = (self.ALPHA_SHIFT * target_shift_y) + ((1.0 - self.ALPHA_SHIFT) * self.shift_y)
+                                # Clamp shifts
+                                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
+                                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
                                 
-                                # 2. Calculate and Smooth the Velocities
+                                # Smooth Velocity
                                 if dt > 0:
-                                    vx_phys = d_shift_x / dt
-                                    vy_phys = d_shift_y / dt
-                                    
-                                    raw_vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
-                                    raw_vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
-                                    
-                                    self.vel_x_norm = (self.ALPHA_VEL * raw_vel_x_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
-                                    self.vel_y_norm = (self.ALPHA_VEL * raw_vel_y_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
+                                    raw_vx_norm = max(-1.0, min(1.0, (d_shift_x / dt) / self.MAX_VELOCITY))
+                                    raw_vy_norm = max(-1.0, min(1.0, (d_shift_y / dt) / self.MAX_VELOCITY))
+                                    self.vel_x_norm = (self.ALPHA_VEL * raw_vx_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
+                                    self.vel_y_norm = (self.ALPHA_VEL * raw_vy_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
                         else:
-                            # Below focus threshold (landed or too close)
+                            # Too low to track or landed
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
-                                # Treat anything below the focus threshold as "grounded"
-                                self.shift_x = 0.0
-                                self.shift_y = 0.0
+                                if new_alt < 0.04: # Reset shifts if definitively landed
+                                    self.shift_x = 0.0
+                                    self.shift_y = 0.0
                         
                         new_vx_norm = self.vel_x_norm
                         new_vy_norm = self.vel_y_norm
