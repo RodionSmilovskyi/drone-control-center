@@ -7,7 +7,7 @@ Type=simple
 User=rodion
 WorkingDirectory=/home/rodion/drone
 EnvironmentFile=/home/rodion/drone/.env
-ExecStart=/usr/bin/python3 services/drone-sensors/sensor.py
+ExecStart=/home/rodion/.pyenv/versions/drone/bin/python services/drone-sensors/sensor.py
 Restart=always
 RestartSec=1
 
