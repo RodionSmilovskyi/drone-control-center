@@ -23,7 +23,7 @@ SPI_CS_PIN = 8
 
 class SensorReal:
     def __init__(self):
-        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.INFO)
+        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.DEBUG)
         self.sensor_down = None
         self.flow = None
         
