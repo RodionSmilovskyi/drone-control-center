@@ -40,7 +40,7 @@ class SensorReal:
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
-        self.FLOW_DEADBAND = 2 # Ignore dx, dy <= 2
+        self.FLOW_DEADBAND = 0 # No deadband for now
         
         self.lock = threading.Lock()
         self._init_hardware()
@@ -88,7 +88,9 @@ class SensorReal:
             dt = current_time - self.last_time
             self.last_time = current_time
 
-            new_alt = self.altitude
+            with self.lock:
+                new_alt = self.altitude
+
             new_vx_norm = 0.0
             new_vy_norm = 0.0
             
