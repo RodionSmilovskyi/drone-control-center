@@ -81,6 +81,7 @@ class SensorReal:
 
     def _poll_loop(self):
         """Background loop to poll sensors at high frequency."""
+        warmup_end = time.time() + 2.0 # 2 seconds warmup for sensor stabilization
         while not self.stop_thread:
             current_time = time.time()
             dt = current_time - self.last_time
@@ -106,21 +107,28 @@ class SensorReal:
                 try:
                     # This call might block if tracking is lost
                     motion = self.flow.get_motion()
-                    if motion is not None:
+                    # Only integrate if warmed up and above 5cm altitude (focus threshold)
+                    if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
-                        d_shift_x = dx * new_alt * self.FLOW_SCALAR
-                        d_shift_y = dy * new_alt * self.FLOW_SCALAR
-                        
-                        with self.lock:
-                            self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
-                            self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
+                        if new_alt > 0.05:
+                            d_shift_x = dx * new_alt * self.FLOW_SCALAR
+                            d_shift_y = dy * new_alt * self.FLOW_SCALAR
                             
-                            if dt > 0:
-                                vx_phys = d_shift_x / dt
-                                vy_phys = d_shift_y / dt
-                                self.vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
-                                self.vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
+                            with self.lock:
+                                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
+                                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
+                                
+                                if dt > 0:
+                                    vx_phys = d_shift_x / dt
+                                    vy_phys = d_shift_y / dt
+                                    self.vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
+                                    self.vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
+                        else:
+                            # Below threshold, reset velocity but keep shift
+                            with self.lock:
+                                self.vel_x_norm = 0.0
+                                self.vel_y_norm = 0.0
                         
                         new_vx_norm = self.vel_x_norm
                         new_vy_norm = self.vel_y_norm
@@ -138,6 +146,12 @@ class SensorReal:
 
             # Small sleep to yield, but poll fast enough for flow (up to 100Hz)
             time.sleep(0.01)
+
+    def reset_shifts(self):
+        """Resets the integrated horizontal shifts to zero."""
+        with self.lock:
+            self.shift_x = 0.0
+            self.shift_y = 0.0
 
     def read(self):
         """Returns the latest sensor state from the background thread."""
