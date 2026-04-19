@@ -18,7 +18,9 @@ if DRONE_ENV == "WSL":
 else:
     try:
         from sensor_real import SensorReal as SensorProvider
-    except ImportError:
+    except ImportError as e:
+        print(f"[CRITICAL] Failed to load real sensors on PI: {e}")
+        print("Falling back to zero-data dummy class.")
         class SensorReal:
             def read(self): return [0.0] * 5
         SensorProvider = SensorReal
