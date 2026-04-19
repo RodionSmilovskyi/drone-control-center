@@ -19,6 +19,7 @@ pi = [
     "adafruit-circuitpython-vl53l1x==1.2.7",
     "Adafruit-Blinka==8.67.0",
     "spidev==3.8",
-    "gpiod"
+    "gpiod",
+    "gpiodevice"
 ]
 
