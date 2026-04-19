@@ -40,6 +40,7 @@ class SensorReal:
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
+        self.FLOW_DEADBAND = 2 # Ignore dx, dy <= 2
         
         self.lock = threading.Lock()
         self._init_hardware()
@@ -111,6 +112,10 @@ class SensorReal:
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
+                        # Apply deadband to filter noise
+                        if abs(dx) <= self.FLOW_DEADBAND: dx = 0
+                        if abs(dy) <= self.FLOW_DEADBAND: dy = 0
+
                         if new_alt > 0.05:
                             d_shift_x = dx * new_alt * self.FLOW_SCALAR
                             d_shift_y = dy * new_alt * self.FLOW_SCALAR
@@ -125,10 +130,14 @@ class SensorReal:
                                     self.vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
                                     self.vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
                         else:
-                            # Below threshold, reset velocity but keep shift
+                            # Below threshold (landed or too close), reset velocity
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
+                                # If definitively on ground, reset shifts
+                                if new_alt < 0.04:
+                                    self.shift_x = 0.0
+                                    self.shift_y = 0.0
                         
                         new_vx_norm = self.vel_x_norm
                         new_vy_norm = self.vel_y_norm
