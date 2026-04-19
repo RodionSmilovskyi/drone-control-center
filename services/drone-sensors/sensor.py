@@ -30,19 +30,15 @@ def main():
     shm_size = 6 * 8 
     shm_name = "drone_sensor_data"
     
-    # Pre-emptive cleanup
+    # Pre-emptive cleanup using the manager's logic or simple try-block
+    shm_mgr = None
     try:
-        from multiprocessing import shared_memory
-        existing = shared_memory.SharedMemory(name=shm_name)
-        existing.close()
-        existing.unlink()
-        print(f"Cleaned up stale SHM: {shm_name}")
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        print(f"Cleanup note: {e}")
-
-    shm_mgr = SharedMemoryManager(shm_name, shm_size, create=True)
+        shm_mgr = SharedMemoryManager(shm_name, shm_size, create=True)
+    except FileExistsError:
+        # If it exists but wasn't unlinked, try to attach and unlink first
+        temp_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
+        temp_mgr.unlink()
+        shm_mgr = SharedMemoryManager(shm_name, shm_size, create=True)
     
     def shutdown_handler(signum, frame):
         print(f"Caught signal {signum}, shutting down...")
