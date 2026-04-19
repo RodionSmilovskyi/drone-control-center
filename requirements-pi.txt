@@ -33,6 +33,10 @@ adafruit-pureio==1.1.11
 binho-host-adapter==0.1.6
     # via adafruit-blinka
 gpiod==2.4.2
+    # via
+    #   drone-control-center (pyproject.toml)
+    #   gpiodevice
+gpiodevice==0.0.5
     # via drone-control-center (pyproject.toml)
 markdown-it-py==4.0.0
     # via rich

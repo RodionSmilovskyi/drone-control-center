@@ -66,52 +66,54 @@ class SensorReal:
                 self.logger.error(f"Failed to init Optical Flow: {e}")
 
         except Exception as e:
-            def read(self):
-                """
-                Returns [altitude (0..1), shift_x (-1..1), shift_y (-1..1), velocity_x (-1..1), velocity_y (-1..1)]
-                """
-                current_time = time.time()
-                dt = current_time - self.last_time
-                self.last_time = current_time
+            self.logger.critical(f"Hardware Initialization Error: {e}")
 
-                # 1. Altitude Reading (VL53L1X)
-                if self.sensor_down:
-                    try:
-                        if self.sensor_down.data_ready:
-                            # Sensor returns cm. Map 0-100cm to 0.0-1.0m
-                            raw_dist = self.sensor_down.distance
-                            if raw_dist is not None:
-                                self.altitude = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 100.0))
-                            self.sensor_down.clear_interrupt()
-                    except Exception as e:
-                        self.logger.error(f"Error reading altitude: {e}")
+    def read(self):
+        """
+        Returns [altitude (0..1), shift_x (-1..1), shift_y (-1..1), velocity_x (-1..1), velocity_y (-1..1)]
+        """
+        current_time = time.time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
 
-                # 2. Optical Flow Reading (PMW3901)
-                vel_x_norm, vel_y_norm = 0.0, 0.0
-                if self.flow:
-                    try:
-                        # get_motion can block or throw RuntimeError on timeout
-                        # We use a try/except to catch timeouts immediately
-                        motion = self.flow.get_motion()
-                        if motion is not None:
-                            dx, dy = motion
+        # 1. Altitude Reading (VL53L1X)
+        if self.sensor_down:
+            try:
+                if self.sensor_down.data_ready:
+                    # Sensor returns cm. Map 0-100cm to 0.0-1.0m
+                    raw_dist = self.sensor_down.distance
+                    if raw_dist is not None:
+                        self.altitude = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 100.0))
+                    self.sensor_down.clear_interrupt()
+            except Exception as e:
+                self.logger.error(f"Error reading altitude: {e}")
 
-                            # Physics calculation as done in strategic_agent.py:
-                            d_shift_x = dx * self.altitude * self.FLOW_SCALAR
-                            d_shift_y = dy * self.altitude * self.FLOW_SCALAR
+        # 2. Optical Flow Reading (PMW3901)
+        vel_x_norm, vel_y_norm = 0.0, 0.0
+        if self.flow:
+            try:
+                # get_motion can block or throw RuntimeError on timeout
+                # We use a try/except to catch timeouts immediately
+                motion = self.flow.get_motion()
+                if motion is not None:
+                    dx, dy = motion
 
-                            self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
-                            self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
+                    # Physics calculation as done in strategic_agent.py:
+                    d_shift_x = dx * self.altitude * self.FLOW_SCALAR
+                    d_shift_y = dy * self.altitude * self.FLOW_SCALAR
 
-                            if dt > 0:
-                                vx_phys = d_shift_x / dt
-                                vy_phys = d_shift_y / dt
-                                # Normalize by MAX_VELOCITY to match SensorMock range [-1, 1]
-                                vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
-                                vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
-                    except (RuntimeError, Exception):
-                        # If flow fails (common when lifted or out of range), 
-                        # we just report zero velocity for this frame to avoid blocking
-                        pass
+                    self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
+                    self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
 
-                return [self.altitude, self.shift_x, self.shift_y, vel_x_norm, vel_y_norm]
+                    if dt > 0:
+                        vx_phys = d_shift_x / dt
+                        vy_phys = d_shift_y / dt
+                        # Normalize by MAX_VELOCITY to match SensorMock range [-1, 1]
+                        vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
+                        vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
+            except (RuntimeError, Exception):
+                # If flow fails (common when lifted or out of range), 
+                # we just report zero velocity for this frame to avoid blocking
+                pass
+
+        return [self.altitude, self.shift_x, self.shift_y, vel_x_norm, vel_y_norm]
