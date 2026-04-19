@@ -25,6 +25,17 @@ class SensorReal:
         self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.INFO)
         self.sensor_down = None
         self.flow = None
+        self.altitude = 0.0
+        self.shift_x = 0.0
+        self.shift_y = 0.0
+        self.last_time = time.time()
+        
+        # Normalization constants (matching strategic_agent.py)
+        self.FLOW_SCALAR = 0.14
+        self.MAX_VELOCITY = 5.0
+        self.MAX_XY_SHIFT = 1.0
+        self.MAX_ALTITUDE = 1.0
+        
         self._init_hardware()
 
     def _init_hardware(self):
@@ -59,23 +70,41 @@ class SensorReal:
 
     def read(self):
         """
-        Returns [altitude, shift_x, shift_y, velocity_x, velocity_y]
-        Note: Real sensor mapping to this format needs calibration.
+        Returns [altitude (0..1), shift_x (-1..1), shift_y (-1..1), velocity_x (-1..1), velocity_y (-1..1)]
         """
-        altitude = 0.0
-        shift_x, shift_y = 0.0, 0.0
-        vel_x, vel_y = 0.0, 0.0
+        current_time = time.time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
 
         if self.sensor_down and self.sensor_down.data_ready:
-            altitude = self.sensor_down.distance / 100.0
+            # VL53L1X distance is in mm. Map 0-1000mm to 0.0-1.0m (matching MAX_ALTITUDE)
+            raw_dist = self.sensor_down.distance
+            self.altitude = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 1000.0))
             self.sensor_down.clear_interrupt()
 
+        vel_x_norm, vel_y_norm = 0.0, 0.0
         if self.flow:
             try:
                 dx, dy = self.flow.get_motion()
-                # Dummy mapping for now: dx/dy as velocities
-                vel_x, vel_y = float(dx), float(dy)
+                
+                # Physics calculation as done in strategic_agent.py:
+                # vx = (dx * alt * FLOW_SCALAR) / dt
+                # shift_x += vx * dt  =>  shift_x += dx * alt * FLOW_SCALAR
+                
+                d_shift_x = dx * self.altitude * self.FLOW_SCALAR
+                d_shift_y = dy * self.altitude * self.FLOW_SCALAR
+                
+                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x + d_shift_x))
+                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y + d_shift_y))
+                
+                if dt > 0:
+                    vx_phys = d_shift_x / dt
+                    vy_phys = d_shift_y / dt
+                    # Normalize by MAX_VELOCITY to match SensorMock range [-1, 1]
+                    vel_x_norm = max(-1.0, min(1.0, vx_phys / self.MAX_VELOCITY))
+                    vel_y_norm = max(-1.0, min(1.0, vy_phys / self.MAX_VELOCITY))
+
             except RuntimeError:
                 pass
 
-        return [altitude, shift_x, shift_y, vel_x, vel_y]
+        return [self.altitude, self.shift_x, self.shift_y, vel_x_norm, vel_y_norm]
