@@ -52,8 +52,8 @@ class SensorReal:
         self.MAX_ALTITUDE = 1.0
         
         # Deadbands and Smoothing
-        self.FLOW_DEADBAND = 0.1 # Threshold on filtered value to suppress jitter
-        self.ALPHA_FLOW = 0.1    # Stronger low-pass for raw flow counts
+        self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
+        self.ALPHA_FLOW = 0.2    # Slightly faster response
         self.ALPHA_ALT = 0.3
         self.ALPHA_VEL = 0.2
 
@@ -145,13 +145,13 @@ class SensorReal:
                             d_shift_y_m = f_dy * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
                             
                             with self.lock:
-                                # Normalize shift by strategic_agent.MAX_XY_SHIFT
-                                self.shift_x += d_shift_x_m / self.MAX_XY_SHIFT
-                                self.shift_y += d_shift_y_m / self.MAX_XY_SHIFT
+                                # Store in METERS
+                                self.shift_x += d_shift_x_m
+                                self.shift_y += d_shift_y_m
                                 
-                                # Hard Clamp normalized shift to [-1, 1]
-                                self.shift_x = max(-1.0, min(1.0, self.shift_x))
-                                self.shift_y = max(-1.0, min(1.0, self.shift_y))
+                                # Hard Clamp shift in meters to [-MAX_XY_SHIFT, MAX_XY_SHIFT]
+                                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
+                                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
                                 
                                 if dt > 0:
                                     # Velocity normalized to MAX_VELOCITY
