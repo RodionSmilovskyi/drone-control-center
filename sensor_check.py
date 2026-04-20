@@ -92,33 +92,35 @@ if __name__ == "__main__":
     
     if sensor_down and flow:
         print("\nReading from both sensors for 20 seconds...")
-        print("(Move optical flow sensor to see values change)")
+        print("Cumulative Tracking Started...")
         start_time = time.time()
         
-        # Keep track of the last known altitude
-        current_altitude = "Waiting..." 
+        current_altitude = 0.0 # Keep as a float for math
+        cumulative_x = 0
+        cumulative_y = 0
         
         while time.time() - start_time < 20:
             try:
-                # 1. Read Optical Flow
-                dx, dy = 0, 0 # Default to 0 instead of N/A for cleaner terminal output
-                try:
-                    dx, dy = flow.get_motion()
-                except RuntimeError:
-                    pass # Timed out, just skip
-                
-                # 2. Read Range Sensor and persist the value
+                # 1. Read Range Sensor
                 if sensor_down.data_ready:
-                    current_altitude = f"{sensor_down.distance:.2f} cm"
+                    current_altitude = sensor_down.distance # Distance in cm
                     sensor_down.clear_interrupt()
                 
-                # Print the persisted altitude and the fresh optical flow
-                print(f"  Altitude: {current_altitude.ljust(12)} | Flow: X={dx:3}, Y={dy:3}")
+                # 2. Read Optical Flow
+                try:
+                    dx, dy = flow.get_motion()
+                    # Add to the running total
+                    cumulative_x += dx
+                    cumulative_y += dy
+                except RuntimeError:
+                    pass 
+                
+                # Print the RUNNING TOTAL, not the raw deltas
+                print(f"  Alt: {current_altitude:5.1f} cm | Pos (pixels): X={cumulative_x:4}, Y={cumulative_y:4}")
 
             except Exception as e:
-                print(f"  Read error: {e}")
+                pass
                 
-            # Run at 100Hz!
             time.sleep(0.01)
         
     else:
