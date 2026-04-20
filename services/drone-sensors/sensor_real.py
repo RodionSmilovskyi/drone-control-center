@@ -36,7 +36,7 @@ class SensorReal:
         self.last_time = time.time()
 
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.524
+        self.FLOW_SCALAR = 0.565
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
