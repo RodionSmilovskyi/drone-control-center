@@ -23,7 +23,7 @@ SPI_CS_PIN = 8
 
 class SensorReal:
     def __init__(self):
-        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.DEBUG)
+        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.INFO)
         self.sensor_down = None
         self.flow = None
         
@@ -36,7 +36,7 @@ class SensorReal:
         self.last_time = time.time()
 
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.346
+        self.FLOW_SCALAR = 0.026
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
@@ -45,11 +45,6 @@ class SensorReal:
         # Smoothing
         self.ALPHA_ALT = 0.3
         self.ALPHA_VEL = 0.2
-
-        # Debugging counters
-        self._motion_events = 0
-        self._total_dx = 0
-        self._total_dy = 0
 
         self.lock = threading.Lock()
         self._init_hardware()
@@ -118,20 +113,7 @@ class SensorReal:
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
-                        if dx != 0 or dy != 0:
-                            self._motion_events += 1
-                            self._total_dx += dx
-                            self._total_dy += dy
-                            # Detailed log to catch altitude mismatches
-                            if self._motion_events % 10 == 0:
-                                self.logger.debug(f"Flow Event: dx={dx}, dy={dy}, alt_used={new_alt:.3f}")
-
-                        if self._motion_events > 0 and self._motion_events % 100 == 0:
-                            self.logger.info(f"Stats (100 events): dx_sum={self._total_dx}, dy_sum={self._total_dy}, avg_alt={new_alt:.3f}")
-                            self._total_dx = 0
-                            self._total_dy = 0
-
-                        # We use 0.02 (2cm) as the floor for integration to avoid zero-multipliers
+                        # Integration logic
                         integration_alt = max(0.02, new_alt)
 
                         if integration_alt > 0.04: # Only integrate if definitely not on table
@@ -150,10 +132,13 @@ class SensorReal:
                                     self.vel_x_norm = (self.ALPHA_VEL * raw_vx) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
                                     self.vel_y_norm = (self.ALPHA_VEL * raw_vy) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
                         else:
-                            # Landed state: reset velocities but NOT shifts (for calibration ease)
+                            # Landed state: reset velocities and shifts
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
+                                if new_alt < 0.04:
+                                    self.shift_x = 0.0
+                                    self.shift_y = 0.0
                 except (RuntimeError, Exception):
                     with self.lock:
                         self.vel_x_norm = 0.0
