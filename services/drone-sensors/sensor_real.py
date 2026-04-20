@@ -52,9 +52,8 @@ class SensorReal:
         self.MAX_ALTITUDE = 1.0
         
         # Deadbands and Smoothing
-        self.FLOW_DEADBAND_X = 0 
-        self.FLOW_DEADBAND_Y = 1 
-        self.ALPHA_FLOW = 0.5   # Low-pass filter for raw flow counts
+        self.FLOW_DEADBAND = 0.1 # Threshold on filtered value to suppress jitter
+        self.ALPHA_FLOW = 0.1    # Stronger low-pass for raw flow counts
         self.ALPHA_ALT = 0.3
         self.ALPHA_VEL = 0.2
 
@@ -135,8 +134,8 @@ class SensorReal:
                         self.filtered_dy = (self.ALPHA_FLOW * dy) + (1.0 - self.ALPHA_FLOW) * self.filtered_dy
 
                         # 2b. Apply Deadbands to filtered motion
-                        f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND_X else 0.0
-                        f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND_Y else 0.0
+                        f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND else 0.0
+                        f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND else 0.0
                         
                         integration_alt = max(0.02, raw_alt_m)
 
