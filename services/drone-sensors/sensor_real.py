@@ -36,14 +36,14 @@ class SensorReal:
         self.last_time = time.time()
 
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.346 
+        self.FLOW_SCALAR = 0.027
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
         
-        # Deadbands to filter phantom motion
-        self.FLOW_DEADBAND_X = 0 
-        self.FLOW_DEADBAND_Y = 1 # Slight filter on Y to catch the "ghost" motion
+        # Deadbands to filter phantom motion and stationary jitter
+        self.FLOW_DEADBAND_X = 1 
+        self.FLOW_DEADBAND_Y = 1 
 
         # Smoothing
         self.ALPHA_ALT = 0.3
