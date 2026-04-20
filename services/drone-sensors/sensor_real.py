@@ -36,15 +36,15 @@ class SensorReal:
         self.last_time = time.time()
 
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.5
+        self.FLOW_SCALAR = 0.346
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
-        self.FLOW_DEADBAND = 0 # Raw data for calibration
+        self.FLOW_DEADBAND = 0 
 
-        # Smoothing (Exponential Moving Average)
-        self.ALPHA_ALT = 0.3 # Smoothing for altitude
-        self.ALPHA_VEL = 0.2 # Heavier smoothing for velocity
+        # Smoothing
+        self.ALPHA_ALT = 0.3
+        self.ALPHA_VEL = 0.2
 
         # Debugging counters
         self._motion_events = 0
@@ -65,7 +65,6 @@ class SensorReal:
             xshut_down = digitalio.DigitalInOut(DOWN_SENSOR_SHUT_PIN)
             xshut_down.direction = digitalio.Direction.OUTPUT
             
-            # Reset sequence
             xshut_down.value = False
             time.sleep(0.1)
             xshut_down.value = True
@@ -91,7 +90,7 @@ class SensorReal:
 
     def _poll_loop(self):
         """Background loop to poll sensors at high frequency."""
-        warmup_end = time.time() + 2.0 # 2 seconds warmup for sensor stabilization
+        warmup_end = time.time() + 2.0
         while not self.stop_thread:
             current_time = time.time()
             dt = current_time - self.last_time
@@ -100,17 +99,13 @@ class SensorReal:
             with self.lock:
                 new_alt = self.altitude
 
-            new_vx_norm = 0.0
-            new_vy_norm = 0.0
-            
             # 1. Altitude Reading
             if self.sensor_down:
                 try:
                     if self.sensor_down.data_ready:
-                        raw_dist = self.sensor_down.distance
+                        raw_dist = self.sensor_down.distance # returns cm
                         if raw_dist is not None:
                             target_alt = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 100.0))
-                            # Smooth Altitude
                             new_alt = (self.ALPHA_ALT * target_alt) + ((1.0 - self.ALPHA_ALT) * new_alt)
                         self.sensor_down.clear_interrupt()
                 except Exception:
@@ -127,68 +122,53 @@ class SensorReal:
                             self._motion_events += 1
                             self._total_dx += dx
                             self._total_dy += dy
-                            self.logger.debug(f"Flow: dx={dx}, dy={dy}, alt={new_alt:.3f}")
+                            # Detailed log to catch altitude mismatches
+                            if self._motion_events % 10 == 0:
+                                self.logger.debug(f"Flow Event: dx={dx}, dy={dy}, alt_used={new_alt:.3f}")
 
-                        if self._motion_events > 0 and self._motion_events % 50 == 0:
-                            self.logger.info(f"Cumulative Flow (50 events): dx_sum={self._total_dx}, dy_sum={self._total_dy}")
-                        
-                        # Apply deadband
-                        if abs(dx) <= self.FLOW_DEADBAND: dx = 0
-                        if abs(dy) <= self.FLOW_DEADBAND: dy = 0
+                        if self._motion_events > 0 and self._motion_events % 100 == 0:
+                            self.logger.info(f"Stats (100 events): dx_sum={self._total_dx}, dy_sum={self._total_dy}, avg_alt={new_alt:.3f}")
+                            self._total_dx = 0
+                            self._total_dy = 0
 
-                        if new_alt > 0.05:
-                            # Scalar is multiplied by altitude because flow magnitude increases with distance
-                            d_shift_x = dx * new_alt * self.FLOW_SCALAR
-                            d_shift_y = dy * new_alt * self.FLOW_SCALAR
+                        # We use 0.02 (2cm) as the floor for integration to avoid zero-multipliers
+                        integration_alt = max(0.02, new_alt)
+
+                        if integration_alt > 0.04: # Only integrate if definitely not on table
+                            d_shift_x = dx * integration_alt * self.FLOW_SCALAR
+                            d_shift_y = dy * integration_alt * self.FLOW_SCALAR
                             
                             with self.lock:
-                                # Pure integration for position (no EMA here to avoid lag/scaling issues)
                                 self.shift_x += d_shift_x
                                 self.shift_y += d_shift_y
-                                
-                                # Clamp shifts
                                 self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
                                 self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
                                 
-                                # Smooth Velocity
                                 if dt > 0:
-                                    raw_vx_norm = max(-1.0, min(1.0, (d_shift_x / dt) / self.MAX_VELOCITY))
-                                    raw_vy_norm = max(-1.0, min(1.0, (d_shift_y / dt) / self.MAX_VELOCITY))
-                                    self.vel_x_norm = (self.ALPHA_VEL * raw_vx_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
-                                    self.vel_y_norm = (self.ALPHA_VEL * raw_vy_norm) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
+                                    raw_vx = max(-1.0, min(1.0, (d_shift_x / dt) / self.MAX_VELOCITY))
+                                    raw_vy = max(-1.0, min(1.0, (d_shift_y / dt) / self.MAX_VELOCITY))
+                                    self.vel_x_norm = (self.ALPHA_VEL * raw_vx) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
+                                    self.vel_y_norm = (self.ALPHA_VEL * raw_vy) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
                         else:
-                            # Too low to track or landed
+                            # Landed state: reset velocities but NOT shifts (for calibration ease)
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
-                                if new_alt < 0.04: # Reset shifts if definitively landed
-                                    self.shift_x = 0.0
-                                    self.shift_y = 0.0
-                        
-                        new_vx_norm = self.vel_x_norm
-                        new_vy_norm = self.vel_y_norm
                 except (RuntimeError, Exception):
-                    # Tracking lost, keep previous shift but reset velocity
                     with self.lock:
                         self.vel_x_norm = 0.0
                         self.vel_y_norm = 0.0
-                    new_vx_norm = 0.0
-                    new_vy_norm = 0.0
 
-            # Update shared state
             with self.lock:
                 self.altitude = new_alt
 
-            # Small sleep to yield, but poll fast enough for flow (up to 100Hz)
             time.sleep(0.01)
 
     def reset_shifts(self):
-        """Resets the integrated horizontal shifts to zero."""
         with self.lock:
             self.shift_x = 0.0
             self.shift_y = 0.0
 
     def read(self):
-        """Returns the latest sensor state from the background thread."""
         with self.lock:
             return [self.altitude, self.shift_x, self.shift_y, self.vel_x_norm, self.vel_y_norm]
