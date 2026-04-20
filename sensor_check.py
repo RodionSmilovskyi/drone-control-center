@@ -91,32 +91,35 @@ if __name__ == "__main__":
     print("\n--- Sensor check complete! ---")
     
     if sensor_down and flow:
-        print("\nReading from both sensors for 5 seconds...")
+        print("\nReading from both sensors for 20 seconds...")
         print("(Move optical flow sensor to see values change)")
         start_time = time.time()
-        while time.time() - start_time < 5:
+        
+        # Keep track of the last known altitude
+        current_altitude = "Waiting..." 
+        
+        while time.time() - start_time < 20:
             try:
-                # Read Optical Flow
-                dx, dy = "N/A", "N/A"
+                # 1. Read Optical Flow
+                dx, dy = 0, 0 # Default to 0 instead of N/A for cleaner terminal output
                 try:
                     dx, dy = flow.get_motion()
                 except RuntimeError:
                     pass # Timed out, just skip
                 
-                # Read Range Sensor
-                dist_cm = "N/A"
+                # 2. Read Range Sensor and persist the value
                 if sensor_down.data_ready:
-                    dist_cm = f"{sensor_down.distance:.2f} cm"
+                    current_altitude = f"{sensor_down.distance:.2f} cm"
                     sensor_down.clear_interrupt()
                 
-                print(f"  Altitude: {dist_cm.ljust(12)} | Flow: X={dx}, Y={dy}")
+                # Print the persisted altitude and the fresh optical flow
+                print(f"  Altitude: {current_altitude.ljust(12)} | Flow: X={dx:3}, Y={dy:3}")
 
             except Exception as e:
                 print(f"  Read error: {e}")
-            time.sleep(0.1) # 10 Hz loop
-            
-        sensor_down.stop_ranging()
-        print("\n--- Test finished ---")
+                
+            # Run at 100Hz!
+            time.sleep(0.01)
         
     else:
         print("\nOne or more sensors failed to initialize. Please check errors above.")
