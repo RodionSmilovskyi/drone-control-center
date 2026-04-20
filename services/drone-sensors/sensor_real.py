@@ -36,11 +36,14 @@ class SensorReal:
         self.last_time = time.time()
 
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.346
+        self.FLOW_SCALAR = 0.346 
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
-        self.FLOW_DEADBAND = 0 
+        
+        # Deadbands to filter phantom motion
+        self.FLOW_DEADBAND_X = 0 
+        self.FLOW_DEADBAND_Y = 1 # Slight filter on Y to catch the "ghost" motion
 
         # Smoothing
         self.ALPHA_ALT = 0.3
@@ -115,6 +118,10 @@ class SensorReal:
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
+                        # Apply deadbands
+                        if abs(dx) <= self.FLOW_DEADBAND_X: dx = 0
+                        if abs(dy) <= self.FLOW_DEADBAND_Y: dy = 0
+                        
                         integration_alt = max(0.02, raw_alt_m)
 
                         if integration_alt > 0.04: 
@@ -124,6 +131,8 @@ class SensorReal:
                             with self.lock:
                                 self.shift_x += d_shift_x
                                 self.shift_y += d_shift_y
+                                
+                                # Hard Clamp
                                 self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
                                 self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
                                 
