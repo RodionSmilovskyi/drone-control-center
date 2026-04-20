@@ -36,7 +36,7 @@ class SensorReal:
         self.last_time = time.time()
 
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.29
+        self.FLOW_SCALAR = 0.346
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
@@ -86,7 +86,6 @@ class SensorReal:
     def _poll_loop(self):
         """Background loop to poll sensors at high frequency."""
         warmup_end = time.time() + 5.0
-        self.logger.info("Sensor warmup started (5 seconds)...")
         
         while not self.stop_thread:
             current_time = time.time()
@@ -101,10 +100,9 @@ class SensorReal:
             if self.sensor_down:
                 try:
                     if self.sensor_down.data_ready:
-                        raw_dist = self.sensor_down.distance # returns cm
+                        raw_dist = self.sensor_down.distance 
                         if raw_dist is not None:
                             raw_alt_m = max(0.0, min(self.MAX_ALTITUDE, raw_dist / 100.0))
-                            # Smooth the shared altitude
                             new_alt = (self.ALPHA_ALT * raw_alt_m) + ((1.0 - self.ALPHA_ALT) * new_alt)
                         self.sensor_down.clear_interrupt()
                 except Exception:
@@ -117,7 +115,6 @@ class SensorReal:
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
-                        # Use raw altitude for integration to avoid smoothing lag in displacement
                         integration_alt = max(0.02, raw_alt_m)
 
                         if integration_alt > 0.04: 
@@ -142,10 +139,6 @@ class SensorReal:
                                 if raw_alt_m < 0.04:
                                     self.shift_x = 0.0
                                     self.shift_y = 0.0
-                    
-                    if current_time <= warmup_end and int(current_time) % 2 == 0:
-                        self.logger.info(f"Warming up... {warmup_end - current_time:.1f}s left")
-                        
                 except (RuntimeError, Exception):
                     with self.lock:
                         self.vel_x_norm = 0.0
