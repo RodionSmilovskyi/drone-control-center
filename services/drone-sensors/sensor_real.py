@@ -36,7 +36,7 @@ class SensorReal:
         self.last_time = time.time()
         
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.05
+        self.FLOW_SCALAR = 0.177
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
@@ -45,7 +45,6 @@ class SensorReal:
         # Smoothing (Exponential Moving Average)
         self.ALPHA_ALT = 0.3 # Smoothing for altitude
         self.ALPHA_VEL = 0.2 # Heavier smoothing for velocity
-        self.ALPHA_SHIFT = 0.5 # Moderate smoothing for shift
         
         self.lock = threading.Lock()
         self._init_hardware()
@@ -129,9 +128,9 @@ class SensorReal:
                             d_shift_y = dy * new_alt * self.FLOW_SCALAR
                             
                             with self.lock:
-                                # Update and Smooth Shifts
-                                self.shift_x = (self.ALPHA_SHIFT * (self.shift_x + d_shift_x)) + ((1.0 - self.ALPHA_SHIFT) * self.shift_x)
-                                self.shift_y = (self.ALPHA_SHIFT * (self.shift_y + d_shift_y)) + ((1.0 - self.ALPHA_SHIFT) * self.shift_y)
+                                # Pure integration for position (no EMA here to avoid lag/scaling issues)
+                                self.shift_x += d_shift_x
+                                self.shift_y += d_shift_y
                                 
                                 # Clamp shifts
                                 self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
