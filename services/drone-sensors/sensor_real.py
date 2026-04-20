@@ -34,21 +34,26 @@ class SensorReal:
         self.vel_x_norm = 0.0
         self.vel_y_norm = 0.0
         self.last_time = time.time()
-        
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.094
+        self.FLOW_SCALAR = 0.5
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
         self.FLOW_DEADBAND = 0 # Raw data for calibration
-        
+
         # Smoothing (Exponential Moving Average)
         self.ALPHA_ALT = 0.3 # Smoothing for altitude
         self.ALPHA_VEL = 0.2 # Heavier smoothing for velocity
-        
+
         self.lock = threading.Lock()
         self._init_hardware()
-        
+
+        # Debugging counters
+        self._motion_events = 0
+        self._total_dx = 0
+        self._total_dy = 0
+
+        def _init_hardware(self):
         # Start background polling thread
         self.stop_thread = False
         self.poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
@@ -117,6 +122,14 @@ class SensorReal:
                     motion = self.flow.get_motion()
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
+                        self._motion_events += 1
+                        self._total_dx += dx
+                        self._total_dy += dy
+
+                        if self._motion_events % 100 == 0:
+                            self.logger.info(f"Raw Flow Accum (100 samples): dx_sum={self._total_dx}, dy_sum={self._total_dy}, last_dx={dx}, last_dy={dy}")
+                            self._total_dx = 0
+                            self._total_dy = 0
                         
                         # Apply deadband
                         if abs(dx) <= self.FLOW_DEADBAND: dx = 0
