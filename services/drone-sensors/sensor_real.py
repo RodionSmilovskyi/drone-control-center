@@ -7,10 +7,15 @@ import logging
 import sys
 import os
 import threading
+import math
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from drone_logging import setup_logger
+try:
+    from strategic_agent import MAX_XY_SHIFT
+except ImportError:
+    MAX_XY_SHIFT = 1.0
 
 # --- Configuration ---
 LOG_FILE = "sensor.log"
@@ -35,19 +40,26 @@ class SensorReal:
         self.vel_y_norm = 0.0
         self.last_time = time.time()
 
+        # Optical Flow Constants (PMW3901)
+        self.FOV_DEGREES = 42.0
+        self.RESOLUTION = 35.0
+        # precompute the scalar: (2 * tan(FOV/2)) / RESOLUTION
+        self.FLOW_METERS_PER_PIXEL_PER_METER = (2 * math.tan(math.radians(self.FOV_DEGREES) / 2)) / self.RESOLUTION
+        
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.565
         self.MAX_VELOCITY = 5.0
-        self.MAX_XY_SHIFT = 1.0
+        self.MAX_XY_SHIFT = MAX_XY_SHIFT # From strategic_agent
         self.MAX_ALTITUDE = 1.0
         
-        # Deadbands to filter phantom motion and stationary jitter
+        # Deadbands and Smoothing
         self.FLOW_DEADBAND_X = 0 
         self.FLOW_DEADBAND_Y = 1 
-
-        # Smoothing
+        self.ALPHA_FLOW = 0.5   # Low-pass filter for raw flow counts
         self.ALPHA_ALT = 0.3
         self.ALPHA_VEL = 0.2
+
+        self.filtered_dx = 0.0
+        self.filtered_dy = 0.0
 
         self.lock = threading.Lock()
         self._init_hardware()
@@ -118,27 +130,34 @@ class SensorReal:
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
-                        # Apply deadbands
-                        if abs(dx) <= self.FLOW_DEADBAND_X: dx = 0
-                        if abs(dy) <= self.FLOW_DEADBAND_Y: dy = 0
+                        # 2a. Low Pass Filter raw motion
+                        self.filtered_dx = (self.ALPHA_FLOW * dx) + (1.0 - self.ALPHA_FLOW) * self.filtered_dx
+                        self.filtered_dy = (self.ALPHA_FLOW * dy) + (1.0 - self.ALPHA_FLOW) * self.filtered_dy
+
+                        # 2b. Apply Deadbands to filtered motion
+                        f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND_X else 0.0
+                        f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND_Y else 0.0
                         
                         integration_alt = max(0.02, raw_alt_m)
 
                         if integration_alt > 0.04: 
-                            d_shift_x = dx * integration_alt * self.FLOW_SCALAR
-                            d_shift_y = dy * integration_alt * self.FLOW_SCALAR
+                            # distance in meters = counts * alt * (2*tan(FOV/2)/RES)
+                            d_shift_x_m = f_dx * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
+                            d_shift_y_m = f_dy * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
                             
                             with self.lock:
-                                self.shift_x += d_shift_x
-                                self.shift_y += d_shift_y
+                                # Normalize shift by strategic_agent.MAX_XY_SHIFT
+                                self.shift_x += d_shift_x_m / self.MAX_XY_SHIFT
+                                self.shift_y += d_shift_y_m / self.MAX_XY_SHIFT
                                 
-                                # Hard Clamp
-                                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
-                                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
+                                # Hard Clamp normalized shift to [-1, 1]
+                                self.shift_x = max(-1.0, min(1.0, self.shift_x))
+                                self.shift_y = max(-1.0, min(1.0, self.shift_y))
                                 
                                 if dt > 0:
-                                    raw_vx = max(-1.0, min(1.0, (d_shift_x / dt) / self.MAX_VELOCITY))
-                                    raw_vy = max(-1.0, min(1.0, (d_shift_y / dt) / self.MAX_VELOCITY))
+                                    # Velocity normalized to MAX_VELOCITY
+                                    raw_vx = max(-1.0, min(1.0, (d_shift_x_m / dt) / self.MAX_VELOCITY))
+                                    raw_vy = max(-1.0, min(1.0, (d_shift_y_m / dt) / self.MAX_VELOCITY))
                                     self.vel_x_norm = (self.ALPHA_VEL * raw_vx) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
                                     self.vel_y_norm = (self.ALPHA_VEL * raw_vy) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
                         else:
