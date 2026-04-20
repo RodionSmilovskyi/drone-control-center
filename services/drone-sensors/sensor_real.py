@@ -23,7 +23,7 @@ SPI_CS_PIN = 8
 
 class SensorReal:
     def __init__(self):
-        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.INFO)
+        self.logger = setup_logger("Sensor_Real", LOG_FILE, logging.DEBUG)
         self.sensor_down = None
         self.flow = None
         
@@ -34,6 +34,7 @@ class SensorReal:
         self.vel_x_norm = 0.0
         self.vel_y_norm = 0.0
         self.last_time = time.time()
+
         # Normalization and Calibration
         self.FLOW_SCALAR = 0.5
         self.MAX_VELOCITY = 5.0
@@ -45,15 +46,14 @@ class SensorReal:
         self.ALPHA_ALT = 0.3 # Smoothing for altitude
         self.ALPHA_VEL = 0.2 # Heavier smoothing for velocity
 
-        self.lock = threading.Lock()
-        self._init_hardware()
-
         # Debugging counters
         self._motion_events = 0
         self._total_dx = 0
         self._total_dy = 0
 
-        def _init_hardware(self):
+        self.lock = threading.Lock()
+        self._init_hardware()
+        
         # Start background polling thread
         self.stop_thread = False
         self.poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
@@ -122,14 +122,15 @@ class SensorReal:
                     motion = self.flow.get_motion()
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
-                        self._motion_events += 1
-                        self._total_dx += dx
-                        self._total_dy += dy
+                        
+                        if dx != 0 or dy != 0:
+                            self._motion_events += 1
+                            self._total_dx += dx
+                            self._total_dy += dy
+                            self.logger.debug(f"Flow: dx={dx}, dy={dy}, alt={new_alt:.3f}")
 
-                        if self._motion_events % 100 == 0:
-                            self.logger.info(f"Raw Flow Accum (100 samples): dx_sum={self._total_dx}, dy_sum={self._total_dy}, last_dx={dx}, last_dy={dy}")
-                            self._total_dx = 0
-                            self._total_dy = 0
+                        if self._motion_events > 0 and self._motion_events % 50 == 0:
+                            self.logger.info(f"Cumulative Flow (50 events): dx_sum={self._total_dx}, dy_sum={self._total_dy}")
                         
                         # Apply deadband
                         if abs(dx) <= self.FLOW_DEADBAND: dx = 0
@@ -191,4 +192,3 @@ class SensorReal:
         """Returns the latest sensor state from the background thread."""
         with self.lock:
             return [self.altitude, self.shift_x, self.shift_y, self.vel_x_norm, self.vel_y_norm]
-
