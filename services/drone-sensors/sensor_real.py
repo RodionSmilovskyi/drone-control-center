@@ -36,11 +36,11 @@ class SensorReal:
         self.last_time = time.time()
         
         # Normalization and Calibration
-        self.FLOW_SCALAR = 0.070
+        self.FLOW_SCALAR = 0.26
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = 1.0
         self.MAX_ALTITUDE = 1.0
-        self.FLOW_DEADBAND = 1 # Ignore tiny jitter
+        self.FLOW_DEADBAND = 0 # Raw data for calibration
         
         # Smoothing (Exponential Moving Average)
         self.ALPHA_ALT = 0.3 # Smoothing for altitude
