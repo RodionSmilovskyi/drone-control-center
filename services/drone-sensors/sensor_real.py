@@ -90,7 +90,7 @@ class SensorReal:
 
             try:
                 self.flow = pmw3901.PMW3901(spi_cs_gpio=SPI_CS_PIN)
-                self.flow.set_rotation(0)
+                self.flow.set_rotation(1)
                 self.logger.info("Optical Flow initialized.")
             except Exception as e:
                 self.logger.error(f"Failed to init Optical Flow: {e}")
