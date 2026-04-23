@@ -43,8 +43,9 @@ class SensorReal:
         # Optical Flow Constants (PMW3901)
         self.FOV_DEGREES = 42.0
         self.RESOLUTION = 35.0
-        # precompute the scalar: (2 * tan(FOV/2)) / RESOLUTION
-        self.FLOW_METERS_PER_PIXEL_PER_METER = (2 * math.tan(math.radians(self.FOV_DEGREES) / 2)) / self.RESOLUTION
+        # Calibrated value: 20cm move at ~13.7cm altitude resulted in 731 pixels.
+        # Constant = 0.20 / (731 * 0.137) ≈ 0.001997
+        self.FLOW_METERS_PER_PIXEL_PER_METER = 0.001997
         
         # Normalization and Calibration
         self.MAX_VELOCITY = 5.0
