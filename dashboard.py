@@ -69,19 +69,36 @@ def get_sensor_table(data: np.ndarray) -> Table:
     
     return table
 
-def get_mode_panel(mode: str) -> Panel:
-    """Creates a panel displaying the current operating mode."""
+def get_rc_table(rc_commands: list) -> Table:
+    """Creates a table for RC commands."""
+    table = Table(title="RC Commands", show_header=True, header_style="bold yellow")
+    table.add_column("Channel", style="dim")
+    table.add_column("Value", justify="right")
+    
+    channels = ["Roll", "Pitch", "Yaw", "Throttle", "Aux1", "Aux2"]
+    for i, label in enumerate(channels):
+        val = rc_commands[i] if i < len(rc_commands) else 1000
+        table.add_row(label, str(val))
+    
+    return table
+
+def get_mode_panel(mode: str, rc_commands: list) -> Panel:
+    """Creates a panel displaying the current operating mode and RC summary."""
     mode_colors = {
         "disarmed": "bold red",
         "armed": "bold green",
         "ai": "bold yellow"
     }
     color = mode_colors.get(mode, "bold white")
-    # Add some padding for visual impact
-    text = Text(f"\n\n{mode.upper()}\n\n", style=color, justify="center")
-    return Panel(text, title="[bold]Operating Mode[/bold]", border_style=color.split()[-1])
+    
+    mode_text = Text(f"{mode.upper()}", style=f"{color} underline")
+    rc_summary = Text(f"\nRC: {rc_commands[:4]}", style="dim")
+    
+    content = Text.assemble("\n", mode_text, "\n", rc_summary)
+    
+    return Panel(content, title="[bold]System Status[/bold]", border_style=color.split()[-1], title_align="center")
 
-def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: str, is_exiting: bool = False) -> Panel:
+def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: str, rc_commands: list, is_exiting: bool = False) -> Panel:
     """Generates the full dashboard panel."""
     if is_exiting:
         return Panel(
@@ -93,7 +110,8 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: st
 
     status_table = get_status_table(heartbeats)
     sensor_table = get_sensor_table(sensor_data)
-    mode_panel = get_mode_panel(mode)
+    rc_table = get_rc_table(rc_commands)
+    mode_panel = get_mode_panel(mode, rc_commands)
     
     sensors_ok = heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0
     
@@ -109,6 +127,7 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: st
     inner_layout.split_row(
         Layout(status_block, size=35),
         Layout(mode_panel, name="center"),
+        Layout(Panel(rc_table, border_style="yellow"), name="rc"),
         Layout(Panel(sensor_table, border_style="cyan"), name="right")
     )
     
@@ -163,8 +182,12 @@ def main():
     try:
         pub_socket.bind("tcp://127.0.0.1:5555")
     except Exception as e:
-        console.print(f"[bold red]ZMQ Bind Error:[/] {e}")
-        # Continue anyway, or could exit. Let's continue for UI sake.
+        console.print(f"[bold red]ZMQ Bind Error (Mode Pub):[//] {e}")
+
+    # SUB to inference for RC commands
+    rc_sub = zmq_context.socket(zmq.SUB)
+    rc_sub.connect("tcp://127.0.0.1:5556")
+    rc_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
     shm_name = "drone_sensor_data"
     shm_size = 6 * 8
@@ -175,6 +198,7 @@ def main():
     # Try to connect to SHM, if not exists, use zeros
     sensor_data = np.zeros(6, dtype=np.float64)
     heartbeats = np.zeros(3, dtype=np.float64)
+    rc_commands = [1000, 1000, 1000, 1000, 1000, 1000]
 
     # Save terminal settings to restore later
     old_settings = termios.tcgetattr(sys.stdin)
@@ -190,13 +214,21 @@ def main():
         kb_thread = threading.Thread(target=keyboard_listener, args=(pub_socket,), daemon=True)
         kb_thread.start()
         
-        with Live(generate_dashboard(sensor_data, heartbeats, current_mode), console=console, screen=True, refresh_per_second=10) as live:
+        with Live(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands), console=console, screen=True, refresh_per_second=10) as live:
             shm_mgr = None
             hb_shm_mgr = None
             try:
                 global shutting_down
                 while not shutting_down:
-                    # Always try to connect if we don't have a manager
+                    # 1. Non-blocking read RC commands
+                    try:
+                        new_rc = rc_sub.recv_pyobj(flags=zmq.NOBLOCK)
+                        if new_rc:
+                            rc_commands = new_rc
+                    except zmq.Again:
+                        pass
+
+                    # 2. Always try to connect if we don't have a manager
                     if shm_mgr is None:
                         try:
                             shm_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
@@ -234,12 +266,12 @@ def main():
                             hb_shm_mgr = None
                     
                     with mode_lock:
-                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode))
+                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands))
                     time.sleep(0.1)
                 
                 # Show shutdown message
                 with mode_lock:
-                    live.update(generate_dashboard(sensor_data, heartbeats, current_mode, is_exiting=True))
+                    live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, is_exiting=True))
                 time.sleep(0.8)
             finally:
                 if shm_mgr:
@@ -252,6 +284,7 @@ def main():
         # Restore terminal settings
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
         pub_socket.close()
+        rc_sub.close()
         zmq_context.term()
     
     console.print("[bold green]Dashboard exited gracefully.[/]")
