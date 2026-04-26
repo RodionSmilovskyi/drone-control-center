@@ -31,9 +31,14 @@ def main():
     # SHM structure: [alt, sx, sy, vx, vy, heartbeat] (6 floats)
     shm_size = 6 * 8 
     shm_name = "drone_sensor_data"
+
+    hb_shm_name = "system_heartbeats"
+    hb_shm_size = 3 * 8
     
     # Pre-emptive cleanup using the manager's logic or simple try-block
     shm_mgr = None
+    hb_shm_mgr = None
+    
     try:
         shm_mgr = SharedMemoryManager(shm_name, shm_size, create=True)
     except FileExistsError:
@@ -41,11 +46,23 @@ def main():
         temp_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
         temp_mgr.unlink()
         shm_mgr = SharedMemoryManager(shm_name, shm_size, create=True)
+
+    try:
+        hb_shm_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=True)
+    except FileExistsError:
+        # If it exists but wasn't unlinked, try to attach and unlink first
+        temp_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=False)
+        temp_mgr.unlink()
+        hb_shm_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=True)
     
     def shutdown_handler(signum, frame):
         print(f"Caught signal {signum}, shutting down...")
-        shm_mgr.close()
-        shm_mgr.unlink()
+        if shm_mgr:
+            shm_mgr.close()
+            shm_mgr.unlink()
+        if hb_shm_mgr:
+            hb_shm_mgr.close()
+            hb_shm_mgr.unlink()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown_handler)
@@ -69,13 +86,25 @@ def main():
             
             array_data = np.array(shm_data, dtype=np.float64)
             shm_mgr.write_array(array_data)
+
+            # Update system heartbeats (Index 0 for sensors)
+            try:
+                hbs = hb_shm_mgr.read_array(np.float64, (3,))
+                hbs[0] = time.time()
+                hb_shm_mgr.write_array(hbs)
+            except Exception as e:
+                print(f"HB Error: {e}")
             
             time.sleep(1/30.0) # 30Hz
     except Exception as e:
         print(f"Error in sensor loop: {e}")
     finally:
-        shm_mgr.close()
-        shm_mgr.unlink()
+        if shm_mgr:
+            shm_mgr.close()
+            shm_mgr.unlink()
+        if hb_shm_mgr:
+            hb_shm_mgr.close()
+            hb_shm_mgr.unlink()
 
 if __name__ == "__main__":
     main()

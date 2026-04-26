@@ -22,35 +22,27 @@ def signal_handler(sig, frame):
     global shutting_down
     shutting_down = True
 
-def check_sensors_alive(sensor_data: np.ndarray) -> bool:
-    """Checks if the sensor heartbeat is recent (within 1.0s)."""
-    if len(sensor_data) < 6:
-        return False
-    
-    heartbeat = sensor_data[5]
-    if heartbeat == 0:
-        return False
-        
-    return (time.time() - heartbeat) < 1.0
-
-def get_status_table(sensors_ok: bool) -> Table:
-    """Creates the status block with dynamic sensor health."""
+def get_status_table(heartbeats: np.ndarray) -> Table:
+    """Creates the status block with dynamic health for all core services."""
     table = Table.grid(padding=(0, 1))
     table.add_column(style="bold white")
     table.add_column()
 
-    sensor_text = "Ok" if sensors_ok else "Fail"
-    sensor_style = "bold green" if sensors_ok else "bold red"
+    def get_status_style(hb_time):
+        if hb_time > 0 and (time.time() - hb_time) < 1.0:
+            return "Ok", "bold green"
+        return "Fail", "bold red"
 
-    statuses = [
-        ("Sensors:", f"[{sensor_style}]{sensor_text}[/{sensor_style}]"),
-        ("Flight controller:", "[bold green]Ok[/bold green]"),
-        ("Tactical controller:", "[bold green]Ok[/bold green]"),
-        ("Strategic agent:", "[bold green]OK[/bold green]"),
+    # Indices: 0: Sensors, 1: Strategic Agent, 2: FC
+    service_map = [
+        ("Sensors:", heartbeats[0]),
+        ("Strategic agent:", heartbeats[1]),
+        ("Flight controller:", heartbeats[2]),
     ]
 
-    for label, status in statuses:
-        table.add_row(label, status)
+    for label, hb in service_map:
+        text, style = get_status_style(hb)
+        table.add_row(label, f"[{style}]{text}[/{style}]")
     
     return table
 
@@ -73,7 +65,7 @@ def get_sensor_table(data: np.ndarray) -> Table:
     
     return table
 
-def generate_dashboard(sensor_data: np.ndarray, sensors_ok: bool, is_exiting: bool = False) -> Panel:
+def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, is_exiting: bool = False) -> Panel:
     """Generates the full dashboard panel."""
     if is_exiting:
         return Panel(
@@ -83,8 +75,10 @@ def generate_dashboard(sensor_data: np.ndarray, sensors_ok: bool, is_exiting: bo
             expand=True
         )
 
-    status_table = get_status_table(sensors_ok)
+    status_table = get_status_table(heartbeats)
     sensor_table = get_sensor_table(sensor_data)
+    
+    sensors_ok = heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0
     
     status_block = Panel(
         status_table,
@@ -121,9 +115,13 @@ def main():
     shm_name = "drone_sensor_data"
     shm_size = 6 * 8
     
+    hb_shm_name = "system_heartbeats"
+    hb_shm_size = 3 * 8
+
     # Try to connect to SHM, if not exists, use zeros
     sensor_data = np.zeros(6, dtype=np.float64)
-    
+    heartbeats = np.zeros(3, dtype=np.float64)
+
     # Save terminal settings to restore later
     old_settings = termios.tcgetattr(sys.stdin)
     
@@ -131,8 +129,9 @@ def main():
         # Set terminal to raw mode to capture single key presses
         tty.setcbreak(sys.stdin.fileno())
         
-        with Live(generate_dashboard(sensor_data, False), console=console, screen=True, refresh_per_second=10) as live:
+        with Live(generate_dashboard(sensor_data, heartbeats), console=console, screen=True, refresh_per_second=10) as live:
             shm_mgr = None
+            hb_shm_mgr = None
             try:
                 global shutting_down
                 while not shutting_down:
@@ -157,23 +156,40 @@ def main():
                             if shm_mgr:
                                 shm_mgr.close()
                             shm_mgr = None 
+
+                    if hb_shm_mgr is None:
+                        try:
+                            hb_shm_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=False)
+                        except Exception:
+                            hb_shm_mgr = None
                     
-                    sensors_ok = check_sensors_alive(sensor_data)
+                    if hb_shm_mgr:
+                        try:
+                            heartbeats = hb_shm_mgr.read_array(np.float64, (3,))
+                            # If heartbeats are stale, the service might have restarted and recreated the SHM.
+                            # We force a reconnect after a short grace period (2.0s).
+                            if heartbeats[0] > 0 and (time.time() - heartbeats[0]) > 2.0:
+                                hb_shm_mgr.close()
+                                hb_shm_mgr = None
+                                if shm_mgr:
+                                    shm_mgr.close()
+                                    shm_mgr = None
+                        except Exception:
+                            if hb_shm_mgr:
+                                hb_shm_mgr.close()
+                            hb_shm_mgr = None
                     
-                    # If heartbeat is bad, clear shm_mgr to force a fresh re-attach next loop
-                    if not sensors_ok and shm_mgr is not None:
-                        shm_mgr.close()
-                        shm_mgr = None
-                    
-                    live.update(generate_dashboard(sensor_data, sensors_ok))
+                    live.update(generate_dashboard(sensor_data, heartbeats))
                     time.sleep(0.1)
                 
                 # Show shutdown message
-                live.update(generate_dashboard(sensor_data, False, is_exiting=True))
+                live.update(generate_dashboard(sensor_data, heartbeats, is_exiting=True))
                 time.sleep(0.8)
             finally:
                 if shm_mgr:
                     shm_mgr.close()
+                if hb_shm_mgr:
+                    hb_shm_mgr.close()
     except Exception as e:
         console.print(f"[bold red]Error:[/] {e}")
     finally:
