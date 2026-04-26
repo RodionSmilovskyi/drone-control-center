@@ -7,6 +7,8 @@ import sys
 import select
 import tty
 import termios
+import threading
+import zmq
 from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
@@ -15,8 +17,10 @@ from rich.text import Text
 from rich.table import Table
 from core.shared_memory_manager import SharedMemoryManager
 
-# Global flag for shutdown
+# Global state
 shutting_down = False
+current_mode = "disarmed"
+mode_lock = threading.Lock()
 
 def signal_handler(sig, frame):
     global shutting_down
@@ -65,7 +69,19 @@ def get_sensor_table(data: np.ndarray) -> Table:
     
     return table
 
-def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, is_exiting: bool = False) -> Panel:
+def get_mode_panel(mode: str) -> Panel:
+    """Creates a panel displaying the current operating mode."""
+    mode_colors = {
+        "disarmed": "bold red",
+        "armed": "bold green",
+        "ai": "bold yellow"
+    }
+    color = mode_colors.get(mode, "bold white")
+    # Add some padding for visual impact
+    text = Text(f"\n\n{mode.upper()}\n\n", style=color, justify="center")
+    return Panel(text, title="[bold]Operating Mode[/bold]", border_style=color.split()[-1])
+
+def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: str, is_exiting: bool = False) -> Panel:
     """Generates the full dashboard panel."""
     if is_exiting:
         return Panel(
@@ -77,6 +93,7 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, is_exiti
 
     status_table = get_status_table(heartbeats)
     sensor_table = get_sensor_table(sensor_data)
+    mode_panel = get_mode_panel(mode)
     
     sensors_ok = heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0
     
@@ -91,7 +108,8 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, is_exiti
     inner_layout = Layout()
     inner_layout.split_row(
         Layout(status_block, size=35),
-        Layout(Panel(sensor_table, border_style="cyan"), name="center")
+        Layout(mode_panel, name="center"),
+        Layout(Panel(sensor_table, border_style="cyan"), name="right")
     )
     
     return Panel(
@@ -101,9 +119,35 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, is_exiti
         expand=True
     )
 
-def is_key_pressed():
-    """Returns True if there is a key waiting in stdin."""
-    return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
+def keyboard_listener(pub_socket):
+    """Background thread to handle keyboard input."""
+    global current_mode, shutting_down
+    while not shutting_down:
+        try:
+            # sys.stdin.read(1) will block in this thread, which is fine
+            char = sys.stdin.read(1)
+            if not char:
+                break
+            
+            new_mode = None
+            char_lower = char.lower()
+            if char_lower == 'a':
+                new_mode = "armed"
+            elif char_lower == 'd':
+                new_mode = "disarmed"
+            elif char_lower == 'x':
+                new_mode = "ai"
+            elif char_lower == 'q':
+                shutting_down = True
+                break
+            
+            if new_mode:
+                with mode_lock:
+                    if current_mode != new_mode:
+                        current_mode = new_mode
+                        pub_socket.send_string(current_mode)
+        except Exception:
+            break
 
 def main():
     console = Console()
@@ -112,6 +156,16 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # ZMQ setup
+    zmq_context = zmq.Context()
+    pub_socket = zmq_context.socket(zmq.PUB)
+    # Using a standard port for local pub/sub
+    try:
+        pub_socket.bind("tcp://127.0.0.1:5555")
+    except Exception as e:
+        console.print(f"[bold red]ZMQ Bind Error:[/] {e}")
+        # Continue anyway, or could exit. Let's continue for UI sake.
+
     shm_name = "drone_sensor_data"
     shm_size = 6 * 8
     
@@ -129,19 +183,19 @@ def main():
         # Set terminal to raw mode to capture single key presses
         tty.setcbreak(sys.stdin.fileno())
         
-        with Live(generate_dashboard(sensor_data, heartbeats), console=console, screen=True, refresh_per_second=10) as live:
+        # Initial publish
+        pub_socket.send_string(current_mode)
+        
+        # Start keyboard thread
+        kb_thread = threading.Thread(target=keyboard_listener, args=(pub_socket,), daemon=True)
+        kb_thread.start()
+        
+        with Live(generate_dashboard(sensor_data, heartbeats, current_mode), console=console, screen=True, refresh_per_second=10) as live:
             shm_mgr = None
             hb_shm_mgr = None
             try:
                 global shutting_down
                 while not shutting_down:
-                    # Check for keyboard input
-                    if is_key_pressed():
-                        char = sys.stdin.read(1)
-                        if char.lower() == 'q':
-                            shutting_down = True
-                            break
-
                     # Always try to connect if we don't have a manager
                     if shm_mgr is None:
                         try:
@@ -179,11 +233,13 @@ def main():
                                 hb_shm_mgr.close()
                             hb_shm_mgr = None
                     
-                    live.update(generate_dashboard(sensor_data, heartbeats))
+                    with mode_lock:
+                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode))
                     time.sleep(0.1)
                 
                 # Show shutdown message
-                live.update(generate_dashboard(sensor_data, heartbeats, is_exiting=True))
+                with mode_lock:
+                    live.update(generate_dashboard(sensor_data, heartbeats, current_mode, is_exiting=True))
                 time.sleep(0.8)
             finally:
                 if shm_mgr:
@@ -195,6 +251,8 @@ def main():
     finally:
         # Restore terminal settings
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        pub_socket.close()
+        zmq_context.term()
     
     console.print("[bold green]Dashboard exited gracefully.[/]")
 
