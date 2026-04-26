@@ -64,10 +64,31 @@ def main():
     shm_size = 6 * 8  # 6 doubles
     shm_mgr = None
 
+    # Heartbeat setup
+    hb_shm_name = "system_heartbeats"
+    hb_shm_size = 3 * 8
+    hb_shm_mgr = None
+
     current_mode = "disarmed"
     
     try:
         while not shutting_down:
+            # 0. Update Heartbeat (Index 1 for Inference)
+            if hb_shm_mgr is None:
+                try:
+                    hb_shm_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=False)
+                except Exception:
+                    hb_shm_mgr = None
+            
+            if hb_shm_mgr:
+                try:
+                    hbs = hb_shm_mgr.read_array(np.float64, (3,))
+                    hbs[1] = time.time()
+                    hb_shm_mgr.write_array(hbs)
+                except Exception:
+                    hb_shm_mgr.close()
+                    hb_shm_mgr = None
+
             # 1. Non-blocking read mode
             try:
                 new_mode = mode_sub.recv_string(flags=zmq.NOBLOCK)

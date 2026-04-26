@@ -37,11 +37,10 @@ def get_status_table(heartbeats: np.ndarray) -> Table:
             return "Ok", "bold green"
         return "Fail", "bold red"
 
-    # Indices: 0: Sensors, 1: Strategic Agent, 2: FC
+    # Indices: 0: Sensors, 1: Inference
     service_map = [
         ("Sensors:", heartbeats[0]),
-        ("Strategic agent:", heartbeats[1]),
-        ("Flight controller:", heartbeats[2]),
+        ("Inference:", heartbeats[1]),
     ]
 
     for label, hb in service_map:
@@ -113,12 +112,13 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: st
     rc_table = get_rc_table(rc_commands)
     mode_panel = get_mode_panel(mode, rc_commands)
     
-    sensors_ok = heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0
+    system_ok = (heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0) and \
+                (heartbeats[1] > 0 and (time.time() - heartbeats[1]) < 1.0)
     
     status_block = Panel(
         status_table,
         title="[bold]Statuses[/bold]",
-        border_style="green" if sensors_ok else "red",
+        border_style="green" if system_ok else "red",
         expand=False
     )
     
