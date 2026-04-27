@@ -1,11 +1,19 @@
 import logging
 import sys
+import os
 
-def setup_logger(name, log_file, level=logging.INFO):
+def setup_logger(name, log_file, level=None):
     """
     Creates and configures a logger that writes to both a file
     and the console (stdout).
+    If DRONE_QUIET environment variable is set to '1', level defaults to WARNING.
     """
+    if level is None:
+        if os.environ.get("DRONE_QUIET") == "1":
+            level = logging.WARNING
+        else:
+            level = logging.INFO
+
     # Create a logger
     logger = logging.getLogger(name)
     logger.setLevel(level)

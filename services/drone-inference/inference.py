@@ -4,6 +4,8 @@ import sys
 import zmq
 import numpy as np
 import signal
+import argparse
+import logging
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
@@ -41,6 +43,11 @@ def handle_ai(obs: np.ndarray) -> list:
 
 def main():
     global shutting_down
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-log", action="store_true", help="Disable periodic logging")
+    args = parser.parse_args()
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
@@ -122,7 +129,8 @@ def main():
                 rc_commands = handle_disarmed(obs)
 
             # 4. Log observation and RC commands
-            logger.info(f"OBS: {obs.tolist()} | RC: {rc_commands}")
+            if not args.no_log and logger.isEnabledFor(logging.INFO):
+                logger.info(f"OBS: {obs.tolist()} | RC: {rc_commands}")
 
             # 5. Publish RC commands
             rc_pub.send_pyobj(rc_commands)
