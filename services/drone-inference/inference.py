@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 
 from core.shared_memory_manager import SharedMemoryManager
 from drone_logging import setup_logger
+from flight_controller import FlightController
 
 # Global flag for shutdown
 shutting_down = False
@@ -19,27 +20,42 @@ def signal_handler(sig, frame):
     global shutting_down
     shutting_down = True
 
-def handle_disarmed(obs: np.ndarray) -> list:
+def handle_disarmed(obs: np.ndarray, fc: FlightController) -> list:
     """
-    Mode: Disarmed. Returns dummy RC commands.
+    Mode: Disarmed. Returns dummy RC commands and resets FC.
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
+    fc.reset()
     return [1000, 1000, 900, 1000, 1000, 1000]
 
-def handle_armed(obs: np.ndarray) -> list:
+def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     """
-    Mode: Armed. Returns dummy RC commands.
+    Mode: Armed. Returns dummy RC commands and resets FC.
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
+    fc.reset()
     return [1000, 1000, 900, 1000, 1800, 1800]
 
-def handle_ai(obs: np.ndarray) -> list:
+def handle_ai(obs: np.ndarray, fc: FlightController) -> list:
     """
-    Mode: AI. Returns dummy RC commands from 'inference'.
+    Mode: AI. Returns RC commands from FlightController with hardcoded action.
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
-    # In the future, this will run TFLite inference
-    return [1500, 1500, 1500, 1000, 1800, 1800]
+    # Hardcoded high-level action: [desired_alt, roll, pitch, yaw_rate]
+    # action[0]=0.3 maps to desired_alt_norm = (0.3+1)/2 = 0.65
+    high_level_action = np.array([0.3, 0.0, 0.0, 0.0], dtype=np.float32)
+    
+    # current altitude is at obs[0]
+    current_alt_norm = obs[0]
+    
+    # Compute low-level RC commands (4 channels: throttle, roll, pitch, yaw)
+    # Using dt=0.1 because the loop runs at 10Hz (time.sleep(0.1))
+    low_level_rc = fc.compute_rc_commands(high_level_action, current_alt_norm, dt=0.1)
+    
+    # reorder to [roll, pitch, throttle, yaw, aux1, aux2]
+    rc_throttle, rc_roll, rc_pitch, rc_yaw = low_level_rc.tolist()
+    
+    return [int(rc_roll), int(rc_pitch), int(rc_throttle), int(rc_yaw), 1800, 1800]
 
 def main():
     global shutting_down
@@ -53,6 +69,9 @@ def main():
 
     logger = setup_logger("drone-inference", "inference.log")
     logger.info("Starting drone-inference service...")
+
+    # Initialize Flight Controller
+    fc = FlightController()
 
     # ZMQ Setup
     context = zmq.Context()
@@ -122,11 +141,11 @@ def main():
 
             # 3. Process based on mode
             if current_mode == "armed":
-                rc_commands = handle_armed(obs)
+                rc_commands = handle_armed(obs, fc)
             elif current_mode == "ai":
-                rc_commands = handle_ai(obs)
+                rc_commands = handle_ai(obs, fc)
             else:
-                rc_commands = handle_disarmed(obs)
+                rc_commands = handle_disarmed(obs, fc)
 
             # 4. Log observation and RC commands
             if not args.no_log and logger.isEnabledFor(logging.INFO):
