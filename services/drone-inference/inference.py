@@ -36,21 +36,20 @@ def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     fc.reset()
     return [1000, 1000, 900, 1000, 1800, 1800]
 
-def handle_ai(obs: np.ndarray, fc: FlightController) -> list:
+def handle_ai(obs: np.ndarray, fc: FlightController, dt: float) -> list:
     """
     Mode: AI. Returns RC commands from FlightController with hardcoded action.
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
     # Hardcoded high-level action: [desired_alt, roll, pitch, yaw_rate]
-    # action[0]=0.3 maps to desired_alt_norm = (0.3+1)/2 = 0.65
+    # action[0]=0.3 maps to desired_alt_norm = (-0.4+1)/2 = 0.3
     high_level_action = np.array([-0.4, 0.0, 0.0, 0.0], dtype=np.float32)
     
     # current altitude is at obs[0]
     current_alt_norm = obs[0]
     
     # Compute low-level RC commands (4 channels: throttle, roll, pitch, yaw)
-    # Using dt=0.1 because the loop runs at 10Hz (time.sleep(0.1))
-    low_level_rc = fc.compute_rc_commands(high_level_action, current_alt_norm, dt=0.1)
+    low_level_rc = fc.compute_rc_commands(high_level_action, current_alt_norm, dt=dt)
     
     # reorder to [roll, pitch, throttle, yaw, aux1, aux2]
     rc_throttle, rc_roll, rc_pitch, rc_yaw = low_level_rc.tolist()
@@ -78,11 +77,13 @@ def main():
     
     # SUB to dashboard for modes
     mode_sub = context.socket(zmq.SUB)
+    mode_sub.setsockopt(zmq.CONFLATE, 1)  # Keep only the last message
     mode_sub.connect("tcp://127.0.0.1:5555")
     mode_sub.setsockopt_string(zmq.SUBSCRIBE, "")
     
     # PUB for RC commands
     rc_pub = context.socket(zmq.PUB)
+    rc_pub.setsockopt(zmq.CONFLATE, 1)
     rc_pub.bind("tcp://127.0.0.1:5556")
 
     # Shared Memory for observations
@@ -96,9 +97,16 @@ def main():
     hb_shm_mgr = None
 
     current_mode = "disarmed"
+    last_time = time.time()
     
     try:
         while not shutting_down:
+            # Calculate dynamic dt
+            current_time = time.time()
+            dt = current_time - last_time
+            last_time = current_time
+            dt = max(dt, 0.001)  # Safeguard
+
             # 0. Update Heartbeat (Index 1 for Inference)
             if hb_shm_mgr is None:
                 try:
@@ -143,7 +151,7 @@ def main():
             if current_mode == "armed":
                 rc_commands = handle_armed(obs, fc)
             elif current_mode == "ai":
-                rc_commands = handle_ai(obs, fc)
+                rc_commands = handle_ai(obs, fc, dt)
             else:
                 rc_commands = handle_disarmed(obs, fc)
 
@@ -154,7 +162,7 @@ def main():
             # 5. Publish RC commands
             rc_pub.send_pyobj(rc_commands)
 
-            time.sleep(0.1)  # 10Hz loop
+            time.sleep(1/30.0)  # 30Hz loop
     except Exception as e:
         logger.error(f"Inference error: {e}")
     finally:

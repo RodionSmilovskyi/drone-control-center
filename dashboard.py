@@ -178,6 +178,7 @@ def main():
     # ZMQ setup
     zmq_context = zmq.Context()
     pub_socket = zmq_context.socket(zmq.PUB)
+    pub_socket.setsockopt(zmq.CONFLATE, 1)
     # Using a standard port for local pub/sub
     try:
         pub_socket.bind("tcp://127.0.0.1:5555")
@@ -186,6 +187,7 @@ def main():
 
     # SUB to inference for RC commands
     rc_sub = zmq_context.socket(zmq.SUB)
+    rc_sub.setsockopt(zmq.CONFLATE, 1)  # Keep only the last message
     rc_sub.connect("tcp://127.0.0.1:5556")
     rc_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
