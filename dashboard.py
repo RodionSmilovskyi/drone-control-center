@@ -74,7 +74,7 @@ def get_rc_table(rc_commands: list) -> Table:
     table.add_column("Channel", style="dim")
     table.add_column("Value", justify="right")
     
-    channels = ["Roll", "Pitch", "Yaw", "Throttle", "Aux1", "Aux2"]
+    channels = ["Roll", "Pitch", "Throttle", "Yaw", "Aux1", "Aux2"]
     for i, label in enumerate(channels):
         val = rc_commands[i] if i < len(rc_commands) else 1000
         table.add_row(label, str(val))
