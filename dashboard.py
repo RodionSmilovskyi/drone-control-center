@@ -113,7 +113,8 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: st
     mode_panel = get_mode_panel(mode, rc_commands)
     
     system_ok = (heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0) and \
-                (heartbeats[1] > 0 and (time.time() - heartbeats[1]) < 1.0)
+                (heartbeats[1] > 0 and (time.time() - heartbeats[1]) < 1.0) and \
+                (heartbeats[2] > 0 and (time.time() - heartbeats[2]) < 1.0)
     
     status_block = Panel(
         status_table,

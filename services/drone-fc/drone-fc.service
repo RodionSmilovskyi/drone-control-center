@@ -1,0 +1,15 @@
+[Unit]
+Description=Drone Flight Controller Service
+After=network.target
+
+[Service]
+Type=simple
+User=rodion
+WorkingDirectory=/home/rodion/drone
+EnvironmentFile=/home/rodion/drone/.env
+ExecStart=/home/rodion/.pyenv/versions/drone/bin/python services/drone-fc/fc.py
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 [Unit]
 Description=Drone Inference Service
-Requires=drone-sensors.service
-After=drone-sensors.service
+Requires=drone-sensors.service drone-fc.service
+After=drone-sensors.service drone-fc.service
 
 [Service]
 Type=simple

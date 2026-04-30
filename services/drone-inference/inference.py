@@ -97,6 +97,30 @@ def main():
     hb_shm_mgr = None
 
     current_mode = "disarmed"
+    
+    # Wait for Sensors and FC services to be online before starting
+    logger.info("Waiting for Sensors and FC services to be online...")
+    while not shutting_down:
+        if hb_shm_mgr is None:
+            try:
+                hb_shm_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=False)
+            except Exception:
+                pass
+        
+        if hb_shm_mgr:
+            try:
+                hbs = hb_shm_mgr.read_array(np.float64, (3,))
+                sensors_ok = (hbs[0] > 0 and time.time() - hbs[0] < 1.0)
+                fc_ok = (hbs[2] > 0 and time.time() - hbs[2] < 1.0)
+                if sensors_ok and fc_ok:
+                    logger.info("Sensors and FC are online. Starting inference loop.")
+                    break
+            except Exception:
+                if hb_shm_mgr:
+                    hb_shm_mgr.close()
+                hb_shm_mgr = None
+        time.sleep(0.5)
+
     last_time = time.time()
     
     try:
