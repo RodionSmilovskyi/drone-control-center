@@ -8,7 +8,7 @@ class FlightController:
         
         self.hover_throttle = 1421
         self.min_throttle = 1341
-        self.max_throttle = 1550
+        self.max_throttle = 1600
         
         self.reset()
 
