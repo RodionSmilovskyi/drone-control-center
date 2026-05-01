@@ -37,10 +37,11 @@ def get_status_table(heartbeats: np.ndarray) -> Table:
             return "Ok", "bold green"
         return "Fail", "bold red"
 
-    # Indices: 0: Sensors, 1: Inference
+    # Indices: 0: Sensors, 1: Inference, 2: FC
     service_map = [
         ("Sensors:", heartbeats[0]),
         ("Inference:", heartbeats[1]),
+        ("FC:", heartbeats[2]),
     ]
 
     for label, hb in service_map:
