@@ -71,6 +71,18 @@ class SharedMemoryManager:
         shm_array = np.ndarray(data.shape, dtype=data.dtype, buffer=self.shm.buf)
         shm_array[:] = data[:]
 
+    def write_array_index(self, index: int, value: Any, dtype: Any, shape: tuple):
+        """Updates a single element in the shared array to avoid race conditions."""
+        if self.lock:
+            with self.lock:
+                self._write_array_index(index, value, dtype, shape)
+        else:
+            self._write_array_index(index, value, dtype, shape)
+
+    def _write_array_index(self, index: int, value: Any, dtype: Any, shape: tuple):
+        shm_array = np.ndarray(shape, dtype=dtype, buffer=self.shm.buf)
+        shm_array[index] = value
+
     def read_array(self, dtype: Any, shape: tuple) -> np.ndarray:
         if self.lock:
             with self.lock:

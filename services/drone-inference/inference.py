@@ -140,9 +140,7 @@ def main():
             
             if hb_shm_mgr:
                 try:
-                    hbs = hb_shm_mgr.read_array(np.float64, (3,))
-                    hbs[1] = time.time()
-                    hb_shm_mgr.write_array(hbs)
+                    hb_shm_mgr.write_array_index(1, time.time(), np.float64, (3,))
                 except Exception:
                     hb_shm_mgr.close()
                     hb_shm_mgr = None

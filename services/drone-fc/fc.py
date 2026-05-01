@@ -88,12 +88,10 @@ def main():
                     hb_shm_mgr = SharedMemoryManager(hb_shm_name, hb_shm_size, create=False)
                 except Exception:
                     pass
-            
+            # Update heartbeat (Index 2)
             if hb_shm_mgr:
                 try:
-                    hbs = hb_shm_mgr.read_array(np.float64, (3,))
-                    hbs[2] = time.time()
-                    hb_shm_mgr.write_array(hbs)
+                    hb_shm_mgr.write_array_index(2, time.time(), np.float64, (3,))
                 except Exception as e:
                     logger.debug(f"Heartbeat write error: {e}")
                     hb_shm_mgr.close()

@@ -89,9 +89,7 @@ def main():
 
             # Update system heartbeats (Index 0 for sensors)
             try:
-                hbs = hb_shm_mgr.read_array(np.float64, (3,))
-                hbs[0] = time.time()
-                hb_shm_mgr.write_array(hbs)
+                hb_shm_mgr.write_array_index(0, time.time(), np.float64, (3,))
             except Exception as e:
                 print(f"HB Error: {e}")
             
