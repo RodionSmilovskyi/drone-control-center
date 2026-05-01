@@ -26,7 +26,7 @@ def handle_disarmed(obs: np.ndarray, fc: FlightController) -> list:
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
     fc.reset()
-    return [1000, 1000, 900, 1000, 1000, 1000]
+    return [1500, 1500, 900, 1500, 1000, 1000]
 
 def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     """
@@ -34,7 +34,7 @@ def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
     fc.reset()
-    return [1000, 1000, 900, 1000, 1800, 1800]
+    return [1500, 1500, 900, 1500, 1800, 1800]
 
 def handle_ai(obs: np.ndarray, fc: FlightController, dt: float) -> list:
     """

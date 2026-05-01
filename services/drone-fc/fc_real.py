@@ -20,6 +20,11 @@ class FCReal:
             'MSP_BOARD_INFO', 'MSP_UID', 'MSP_ACC_TRIM', 'MSP_NAME', 'MSP_STATUS', 'MSP_STATUS_EX',
             'MSP_BATTERY_CONFIG', 'MSP_BATTERY_STATE', 'MSP_BOXNAMES', 'MSP_ATTITUDE', 'MSP_ALTITUDE'
         ]
+
+        # Match simpleUI.py extra commands for iNAV
+        if self.board.INAV:
+            command_list.append('MSPV2_INAV_ANALOG')
+            command_list.append('MSP_VOLTAGE_METER_CONFIG')
         
         for msg in command_list: 
             if self.board.send_RAW_msg(MSPy.MSPCodes[msg], data=[]):
