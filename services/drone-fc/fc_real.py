@@ -9,7 +9,7 @@ class FCReal:
         self.logger.info(f"Connecting to FC on {serial_port}...")
         
         self.board = MSPy(device=serial_port, loglevel='WARNING', baudrate=baudrate)
-        if self.board == 1:
+        if self.board.__enter__() == 1: # Explicitly open the serial port
             raise Exception(f"Could not connect to flight controller at {serial_port}")
 
         self.logger.info("Connected! Starting initialization sequence...")
@@ -34,3 +34,11 @@ class FCReal:
         if self.board.send_RAW_RC(rc_commands):
             dataHandler = self.board.receive_msg()
             self.board.process_recv_data(dataHandler)
+
+    def close(self):
+        """Closes the connection to the flight controller."""
+        if hasattr(self, 'board') and self.board:
+            try:
+                self.board.__exit__(None, None, None)
+            except Exception as e:
+                self.logger.error(f"Error closing FC board: {e}")

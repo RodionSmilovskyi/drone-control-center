@@ -49,6 +49,8 @@ def main():
 
     def shutdown_handler(signum, frame):
         logger.info(f"Caught signal {signum}, shutting down...")
+        if hasattr(provider, 'close'):
+            provider.close()
         if hb_shm_mgr:
             hb_shm_mgr.close()
         rc_sub.close()
