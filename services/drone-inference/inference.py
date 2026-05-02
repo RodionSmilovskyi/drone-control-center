@@ -121,16 +121,10 @@ def main():
                 hb_shm_mgr = None
         time.sleep(0.5)
 
-    last_time = time.time()
+    last_sensor_time = 0.0
     
     try:
         while not shutting_down:
-            # Calculate dynamic dt
-            current_time = time.time()
-            dt = current_time - last_time
-            last_time = current_time
-            dt = max(dt, 0.001)  # Safeguard
-
             # 0. Update Heartbeat (Index 1 for Inference)
             if hb_shm_mgr is None:
                 try:
@@ -169,22 +163,33 @@ def main():
                     shm_mgr.close()
                     shm_mgr = None
 
-            # 3. Process based on mode
-            if current_mode == "armed":
-                rc_commands = handle_armed(obs, fc)
-            elif current_mode == "ai":
-                rc_commands = handle_ai(obs, fc, dt)
-            else:
-                rc_commands = handle_disarmed(obs, fc)
+            # 3. Process if we have new sensor data
+            current_sensor_time = obs[5]
+            if current_sensor_time > last_sensor_time:
+                # Calculate dynamic dt from sensor timestamps
+                if last_sensor_time == 0:
+                    dt = 1/30.0 # Default for first frame
+                else:
+                    dt = current_sensor_time - last_sensor_time
+                
+                last_sensor_time = current_sensor_time
+                dt = max(dt, 0.001)  # Safeguard
 
-            # 4. Log observation and RC commands
-            if not args.no_log and logger.isEnabledFor(logging.INFO):
-                logger.info(f"OBS: {obs.tolist()} | RC: {rc_commands}")
+                if current_mode == "armed":
+                    rc_commands = handle_armed(obs, fc)
+                elif current_mode == "ai":
+                    rc_commands = handle_ai(obs, fc, dt)
+                else:
+                    rc_commands = handle_disarmed(obs, fc)
 
-            # 5. Publish RC commands
-            rc_pub.send_pyobj(rc_commands)
+                # 4. Log observation and RC commands
+                if not args.no_log and logger.isEnabledFor(logging.INFO):
+                    logger.info(f"OBS: {obs.tolist()} | RC: {rc_commands}")
 
-            time.sleep(1/30.0)  # 30Hz loop
+                # 5. Publish RC commands
+                rc_pub.send_pyobj(rc_commands)
+
+            time.sleep(0.01)  # Poll at 100Hz
     except Exception as e:
         logger.error(f"Inference error: {e}")
     finally:
