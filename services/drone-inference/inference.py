@@ -122,7 +122,8 @@ def main():
         time.sleep(0.5)
 
     last_sensor_time = 0.0
-    
+    last_alt = -999.0
+    rc_commands = [1500, 1500, 900, 1500, 1000, 1000]
     try:
         while not shutting_down:
             # 0. Update Heartbeat (Index 1 for Inference)
@@ -165,7 +166,8 @@ def main():
 
             # 3. Process if we have new sensor data
             current_sensor_time = obs[5]
-            if current_sensor_time > last_sensor_time:
+            current_alt = obs[0]
+            if current_alt != last_alt:
                 # Calculate dynamic dt from sensor timestamps
                 if last_sensor_time == 0:
                     dt = 1/30.0 # Default for first frame
@@ -173,6 +175,7 @@ def main():
                     dt = current_sensor_time - last_sensor_time
                 
                 last_sensor_time = current_sensor_time
+                last_alt = current_alt
                 dt = max(dt, 0.001)  # Safeguard
 
                 if current_mode == "armed":
@@ -187,7 +190,7 @@ def main():
                     logger.info(f"OBS: {obs.tolist()} | RC: {rc_commands}")
 
                 # 5. Publish RC commands
-                rc_pub.send_pyobj(rc_commands)
+            rc_pub.send_pyobj(rc_commands)
 
             time.sleep(0.01)  # Poll at 100Hz
     except Exception as e:
