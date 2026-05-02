@@ -1,11 +1,11 @@
 class PIDController:
     """PID Controller with Derivative-on-Measurement to prevent setpoint kicks."""
-    def __init__(self, Kp: float, Ki: float, Kd: float, setpoint: float = 0.0):
+    def __init__(self, Kp: float, Ki: float, Kd: float, setpoint: float = 0.0, integral_limit: float = 2.0):
         self.Kp, self.Ki, self.Kd = Kp, Ki, Kd
         self.setpoint = setpoint
         self.integral = 0.0
         self.last_measurement = 0.0
-        self.integral_limit = 2.0
+        self.integral_limit = integral_limit
 
     def reset(self):
         self.last_measurement = 0.0
