@@ -5,6 +5,7 @@ class PIDController:
         self.setpoint = setpoint
         self.integral = 0.0
         self.last_measurement = 0.0
+        self.integral_limit = 2.0
 
     def reset(self):
         self.last_measurement = 0.0
@@ -13,6 +14,8 @@ class PIDController:
     def compute(self, measurement: float, dt: float) -> float:
         error = self.setpoint - measurement
         self.integral += error * dt
+        self.integral = max(-self.integral_limit, min(self.integral_limit, self.integral))
+        
         if dt > 0:
             derivative = -(measurement - self.last_measurement) / dt
         else:

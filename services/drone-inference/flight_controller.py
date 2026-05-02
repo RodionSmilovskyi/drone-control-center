@@ -4,9 +4,9 @@ from pid_controller import PIDController
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
-        self.throttle_pid = PIDController(Kp=3, Ki=0, Kd=0.1)
+        self.throttle_pid = PIDController(Kp=3, Ki=0.5, Kd=0.1)
         
-        self.hover_throttle = 1550
+        self.hover_throttle = 1650
         self.min_throttle = 1341
         self.max_throttle = 1800
         
