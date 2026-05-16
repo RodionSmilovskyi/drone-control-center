@@ -42,8 +42,8 @@ def handle_ai(obs: np.ndarray, fc: FlightController, dt: float) -> list:
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
     # Hardcoded high-level action: [desired_alt, roll, pitch, yaw_rate]
-    # action[0]=0.3 maps to desired_alt_norm = (-0.4+1)/2 = 0.3
-    high_level_action = np.array([-0.4, 0.0, 0.0, 0.0], dtype=np.float32)
+    # action[0]=0.3 maps to desired_alt_norm = (-0.2+1)/2 = 0.4
+    high_level_action = np.array([-0.2, 0.0, 0.0, 0.0], dtype=np.float32)
     
     # current altitude is at obs[0]
     current_alt_norm = obs[0]
