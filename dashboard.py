@@ -173,6 +173,16 @@ def keyboard_listener(pub_socket):
 def main():
     console = Console()
     
+    # Clear inference.log if it exists
+    try:
+        # Use absolute path relative to this script
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inference.log")
+        if os.path.exists(log_path):
+            with open(log_path, "w") as f:
+                f.truncate(0)
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not clear inference.log: {e}[/]")
+
     # Register signals for graceful exit
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
