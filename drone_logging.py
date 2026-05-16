@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+from logging.handlers import WatchedFileHandler
 
 def setup_logger(name, log_file, level=None):
     """
@@ -25,7 +26,7 @@ def setup_logger(name, log_file, level=None):
     )
 
     # Create a file handler
-    file_handler = logging.FileHandler(log_file, mode='w') # 'w' to overwrite log on each run
+    file_handler = WatchedFileHandler(log_file)
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
 
