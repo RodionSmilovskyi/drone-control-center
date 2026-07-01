@@ -15,31 +15,40 @@ import pmw3901
 DOWN_SENSOR_SHUT_PIN = board.D17
 DOWN_SENSOR_ADDRESS = 0x30        # New address we will assign
 
+# Connect your *front-facing* sensor's XSHUT pin to GPIO 27
+FRONT_SENSOR_SHUT_PIN = board.D27
+FRONT_SENSOR_ADDRESS = 0x31
+
 # SPI (Optical Flow)
 # Connect your sensor's CS pin to BCM 8 (Physical Pin 24)
 SPI_CS_PIN = 8
 
 def initialize_sensors():
     """
-    Attempts to initialize one I2C sensor and one SPI sensor.
-    Returns (sensor_down, flow)
+    Attempts to initialize two I2C sensors and one SPI sensor.
+    Returns (sensor_down, sensor_front, flow)
     """
     
-    # --- 1. Check I2C Bus and Range Sensor ---
+    # --- 1. Check I2C Bus and Range Sensors ---
     print("--- Checking I2C Bus (VL53L1X)...")
     sensor_down = None
+    sensor_front = None
     
     try:
         # Create the I2C bus
         i2c = board.I2C()
         print("I2C bus OK.")
 
-        # Create shutdown pin object
+        # Create shutdown pin objects
         xshut_down = digitalio.DigitalInOut(DOWN_SENSOR_SHUT_PIN)
         xshut_down.direction = digitalio.Direction.OUTPUT
+        
+        xshut_front = digitalio.DigitalInOut(FRONT_SENSOR_SHUT_PIN)
+        xshut_front.direction = digitalio.Direction.OUTPUT
 
-        # Shut down sensor
+        # Shut down sensors
         xshut_down.value = False
+        xshut_front.value = False
         time.sleep(0.1)
 
         # --- Initialize Down-Facing Sensor ---
@@ -57,7 +66,20 @@ def initialize_sensors():
         
         sensor_down.start_ranging()
         
-        print("--- VL53L1X Sensor: SUCCESS! ---")
+        print("--- VL53L1X Down Sensor: SUCCESS! ---")
+
+        # --- Initialize Front-Facing Sensor ---
+        print(f"Bringing Front-Sensor (on GPIO {FRONT_SENSOR_SHUT_PIN}) online...")
+        xshut_front.value = True
+        time.sleep(0.1)
+        
+        sensor_front = adafruit_vl53l1x.VL53L1X(i2c)
+        
+        print(f"Changing Front-Sensor address to {hex(FRONT_SENSOR_ADDRESS)}...")
+        sensor_front.set_address(FRONT_SENSOR_ADDRESS)
+        sensor_front.start_ranging()
+        
+        print("--- VL53L1X Front Sensor: SUCCESS! ---")
 
     except Exception as e:
         print(f"FAILED to initialize I2C sensor: {e}")
@@ -83,28 +105,33 @@ def initialize_sensors():
         print("Please lift sensor > 8cm off a textured surface and move it.")
         flow = None # Mark as failed
         
-    return sensor_down, flow
+    return sensor_down, sensor_front, flow
 
 if __name__ == "__main__":
-    sensor_down, flow = initialize_sensors()
+    sensor_down, sensor_front, flow = initialize_sensors()
     
     print("\n--- Sensor check complete! ---")
     
-    if sensor_down and flow:
-        print("\nReading from both sensors for 20 seconds...")
+    if sensor_down and sensor_front and flow:
+        print("\nReading from all sensors for 20 seconds...")
         print("Cumulative Tracking Started...")
         start_time = time.time()
         
         current_altitude = 0.0 # Keep as a float for math
+        current_front_dist = 0.0
         cumulative_x = 0
         cumulative_y = 0
         
         while time.time() - start_time < 20:
             try:
-                # 1. Read Range Sensor
+                # 1. Read Range Sensors
                 if sensor_down.data_ready:
                     current_altitude = sensor_down.distance # Distance in cm
                     sensor_down.clear_interrupt()
+                
+                if sensor_front.data_ready:
+                    current_front_dist = sensor_front.distance
+                    sensor_front.clear_interrupt()
                 
                 # 2. Read Optical Flow
                 try:
@@ -116,7 +143,7 @@ if __name__ == "__main__":
                     pass 
                 
                 # Print the RUNNING TOTAL, not the raw deltas
-                print(f"  Alt: {current_altitude:5.1f} cm | Pos (pixels): X={cumulative_x:4}, Y={cumulative_y:4}")
+                print(f"  Alt: {current_altitude:5.1f} cm | Front: {current_front_dist:5.1f} cm | Pos (pixels): X={cumulative_x:4}, Y={cumulative_y:4}")
 
             except Exception as e:
                 pass
