@@ -56,14 +56,17 @@ from yamspy import MSPy
 
 # --- Logging setup: reset log file on every start ---
 LOG_FILE = "simpleUI.log"
-logging.basicConfig(
-    filename=LOG_FILE,
-    filemode='w',          # 'w' truncates the file on each run
-    level=logging.DEBUG,
-    format='%(asctime)s %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+
 _ui_logger = logging.getLogger('simpleUI')
+_ui_logger.setLevel(logging.INFO)
+_ui_logger.propagate = False  # do NOT bubble up to root (blocks MSPy spam)
+
+_log_handler = logging.FileHandler(LOG_FILE, mode='w')  # 'w' resets on each run
+_log_handler.setFormatter(logging.Formatter('%(asctime)s  %(message)s', datefmt='%H:%M:%S'))
+_ui_logger.addHandler(_log_handler)
+
+# Silence MSPy's own logger so its serial debug bytes never reach our file
+logging.getLogger('MSPy').setLevel(logging.WARNING)
 
 
 def log_addstr(screen, row, col, text, *args):
