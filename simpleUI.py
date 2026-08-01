@@ -46,12 +46,30 @@ __status__ = "Development"
 
 import time
 import curses
+import logging
 from collections import deque
 from itertools import cycle
 import numpy as np
 import tflite_runtime.interpreter as tflite
 
 from yamspy import MSPy
+
+# --- Logging setup: reset log file on every start ---
+LOG_FILE = "simpleUI.log"
+logging.basicConfig(
+    filename=LOG_FILE,
+    filemode='w',          # 'w' truncates the file on each run
+    level=logging.DEBUG,
+    format='%(asctime)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+_ui_logger = logging.getLogger('simpleUI')
+
+
+def log_addstr(screen, row, col, text, *args):
+    """Wrapper around screen.addstr that also logs the text to file."""
+    screen.addstr(row, col, text, *args)
+    _ui_logger.info("[row=%d col=%d] %s", row, col, text)
 
 # Max periods for:
 CTRL_LOOP_TIME = 1/100
@@ -102,7 +120,7 @@ def run_curses(external_function):
         # map arrow keys to special values
         screen.keypad(True)
 
-        screen.addstr(1, 0, "Press 'q' to quit, 'r' to reboot, 'm' to change mode, 'a' to arm, 'd' to disarm and arrow keys to control", curses.A_BOLD)
+        log_addstr(screen, 1, 0, "Press 'q' to quit, 'r' to reboot, 'm' to change mode, 'a' to arm, 'd' to disarm and arrow keys to control", curses.A_BOLD)
         
         result = external_function(screen)
 
@@ -132,13 +150,13 @@ def keyboard_controller(screen):
 
     # "print" doesn't work with curses, use addstr instead
     try:
-        screen.addstr(15, 0, "Connecting to the FC...")
+        log_addstr(screen, 15, 0, "Connecting to the FC...")
 
         with MSPy(device=SERIAL_PORT, loglevel='WARNING', baudrate=115200) as board:
             if board == 1: # an error occurred...
                 return 1
 
-            screen.addstr(15, 0, "Connecting to the FC... connected!")
+            log_addstr(screen, 15, 0, "Connecting to the FC... connected!")
             screen.clrtoeol()
             screen.move(1,0)
 
@@ -166,13 +184,13 @@ def keyboard_controller(screen):
             warn_voltage = board.BATTERY_CONFIG['vbatwarningcellvoltage']*cellCount
             max_voltage = board.BATTERY_CONFIG['vbatmaxcellvoltage']*cellCount
 
-            screen.addstr(15, 0, "apiVersion: {}".format(board.CONFIG['apiVersion']))
+            log_addstr(screen, 15, 0, "apiVersion: {}".format(board.CONFIG['apiVersion']))
             screen.clrtoeol()
-            screen.addstr(15, 50, "flightControllerIdentifier: {}".format(board.CONFIG['flightControllerIdentifier']))
-            screen.addstr(16, 0, "flightControllerVersion: {}".format(board.CONFIG['flightControllerVersion']))
-            screen.addstr(16, 50, "boardIdentifier: {}".format(board.CONFIG['boardIdentifier']))
-            screen.addstr(17, 0, "boardName: {}".format(board.CONFIG['boardName']))
-            screen.addstr(17, 50, "name: {}".format(board.CONFIG['name']))
+            log_addstr(screen, 15, 50, "flightControllerIdentifier: {}".format(board.CONFIG['flightControllerIdentifier']))
+            log_addstr(screen, 16, 0, "flightControllerVersion: {}".format(board.CONFIG['flightControllerVersion']))
+            log_addstr(screen, 16, 50, "boardIdentifier: {}".format(board.CONFIG['boardIdentifier']))
+            log_addstr(screen, 17, 0, "boardName: {}".format(board.CONFIG['boardName']))
+            log_addstr(screen, 17, 50, "name: {}".format(board.CONFIG['name']))
 
 
             slow_msgs = cycle(['MSP_ANALOG', 'MSP_STATUS_EX', 'MSP_MOTOR', 'MSP_RC', 'MSP_ATTITUDE', 'MSP_ALTITUDE'])
@@ -201,7 +219,7 @@ def keyboard_controller(screen):
                     CMDS['aux1'] = 1000
 
                 elif char == ord('r') or char == ord('R'):
-                    screen.addstr(3, 0, 'Sending Reboot command...')
+                    log_addstr(screen, 3, 0, 'Sending Reboot command...')
                     screen.clrtoeol()
                     board.reboot()
                     time.sleep(0.5)
@@ -307,52 +325,52 @@ def keyboard_controller(screen):
                         elif voltage >= max_voltage:
                             voltage_msg = "VOLTAGE TOO HIGH"
 
-                        screen.addstr(8, 0, "Battery Voltage: {:2.2f}V".format(board.ANALOG['voltage']))
+                        log_addstr(screen, 8, 0, "Battery Voltage: {:2.2f}V".format(board.ANALOG['voltage']))
                         screen.clrtoeol()
-                        screen.addstr(8, 24, voltage_msg, curses.A_BOLD + curses.A_BLINK)
+                        log_addstr(screen, 8, 24, voltage_msg, curses.A_BOLD + curses.A_BLINK)
                         screen.clrtoeol()
 
                     elif next_msg == 'MSP_STATUS_EX':
                         ARMED = board.bit_check(board.CONFIG['mode'],0)
-                        screen.addstr(5, 0, "ARMED: {}".format(ARMED), curses.A_BOLD)
+                        log_addstr(screen, 5, 0, "ARMED: {}".format(ARMED), curses.A_BOLD)
                         screen.clrtoeol()
 
-                        screen.addstr(5, 50, "armingDisableFlags: {}".format(board.process_armingDisableFlags(board.CONFIG['armingDisableFlags'])))
+                        log_addstr(screen, 5, 50, "armingDisableFlags: {}".format(board.process_armingDisableFlags(board.CONFIG['armingDisableFlags'])))
                         screen.clrtoeol()
 
-                        screen.addstr(6, 0, "cpuload: {}".format(board.CONFIG['cpuload']))
+                        log_addstr(screen, 6, 0, "cpuload: {}".format(board.CONFIG['cpuload']))
                         screen.clrtoeol()
-                        screen.addstr(6, 50, "cycleTime: {}".format(board.CONFIG['cycleTime']))
-                        screen.clrtoeol()
-
-                        screen.addstr(7, 0, "mode: {}".format(board.CONFIG['mode']))
+                        log_addstr(screen, 6, 50, "cycleTime: {}".format(board.CONFIG['cycleTime']))
                         screen.clrtoeol()
 
-                        screen.addstr(7, 50, "Flight Mode: {}".format(board.process_mode(board.CONFIG['mode'])))
+                        log_addstr(screen, 7, 0, "mode: {}".format(board.CONFIG['mode']))
+                        screen.clrtoeol()
+
+                        log_addstr(screen, 7, 50, "Flight Mode: {}".format(board.process_mode(board.CONFIG['mode'])))
                         screen.clrtoeol()
 
 
                     elif next_msg == 'MSP_MOTOR':
-                        screen.addstr(9, 0, "Motor Values: {}".format(board.MOTOR_DATA))
+                        log_addstr(screen, 9, 0, "Motor Values: {}".format(board.MOTOR_DATA))
                         screen.clrtoeol()
                         
                     elif next_msg == 'MSP_ATTITUDE':
-                        screen.addstr(10, 0, "Attitude: {}".format(board.SENSOR_DATA['kinematics']))
+                        log_addstr(screen, 10, 0, "Attitude: {}".format(board.SENSOR_DATA['kinematics']))
                         screen.clrtoeol()
                         
                     elif next_msg == 'MSP_ALTITUDE':
-                        screen.addstr(11, 0, "Altitude: {}".format(board.SENSOR_DATA['altitude']))
+                        log_addstr(screen, 11, 0, "Altitude: {}".format(board.SENSOR_DATA['altitude']))
                         screen.clrtoeol()
 
                     elif next_msg == 'MSP_RC':
-                        screen.addstr(12, 0, "RC Channels Values: {}".format(board.RC['channels']))
+                        log_addstr(screen, 12, 0, "RC Channels Values: {}".format(board.RC['channels']))
                         screen.clrtoeol()
 
-                    screen.addstr(13, 0, "GUI cycleTime: {0:2.2f}ms (average {1:2.2f}Hz)".format((last_cycleTime)*1000,
+                    log_addstr(screen, 13, 0, "GUI cycleTime: {0:2.2f}ms (average {1:2.2f}Hz)".format((last_cycleTime)*1000,
                                                                                                 1/(sum(average_cycle)/len(average_cycle))))
                     screen.clrtoeol()
 
-                    screen.addstr(3, 0, cursor_msg)
+                    log_addstr(screen, 3, 0, cursor_msg)
                     screen.clrtoeol()
                     
 
@@ -365,7 +383,7 @@ def keyboard_controller(screen):
                 average_cycle.popleft()
 
     finally:
-        screen.addstr(5, 0, "Disconneced from the FC!")
+        log_addstr(screen, 5, 0, "Disconneced from the FC!")
         screen.clrtoeol()
 
 if __name__ == "__main__":
