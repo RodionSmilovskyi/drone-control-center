@@ -163,7 +163,7 @@ class DroneController:
         grid.add_column("Key2", style="cyan", justify="right")
         grid.add_column("Value2", style="magenta")
         
-        armed_style = "bold red blink" if self.state["armed"] else "bold green"
+        armed_style = "bold red" if self.state["armed"] else "bold green"
         armed_text = "ARMED" if self.state["armed"] else "DISARMED"
         
         grid.add_row("FC Version:", self.state["fc_version"], "Status:", f"[{armed_style}]{armed_text}[/{armed_style}]")
@@ -197,7 +197,7 @@ def main():
         
         loop_times = []
         
-        with KeyboardPoller() as poller, Live(drone.build_ui(), refresh_per_second=20) as live:
+        with KeyboardPoller() as poller, Live(get_renderable=drone.build_ui, refresh_per_second=10, screen=True) as live:
             while True:
                 start_time = time.time()
                 
@@ -215,7 +215,6 @@ def main():
                 if (time.time() - last_tel_time) >= SLOW_LOOP_TIME:
                     drone.update_telemetry()
                     last_tel_time = time.time()
-                    live.update(drone.build_ui())
                     
                 # Calculate Hz
                 elapsed = time.time() - start_time
