@@ -9,7 +9,7 @@ from core.shared_memory_manager import SharedMemoryManager
 
 def main():
     shm_name = "drone_sensor_data"
-    shm_size = 6 * 8
+    shm_size = 7 * 8
     
     try:
         shm_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
@@ -28,17 +28,19 @@ def main():
     try:
         while True:
             input(">>> Press ENTER to capture START...")
-            data = shm_mgr.read_array(np.float64, (6,))
+            data = shm_mgr.read_array(np.float64, (7,))
             start_alt = data[0]
-            start_sx = data[1]
-            start_sy = data[2]
-            print(f"START: Alt={start_alt:.3f}m | X={start_sx:.3f} | Y={start_sy:.3f}")
+            start_front = data[1]
+            start_sx = data[2]
+            start_sy = data[3]
+            print(f"START: Alt={start_alt:.3f}m | Front={start_front:.3f}m | X={start_sx:.3f} | Y={start_sy:.3f}")
 
             input(">>> Move drone, then press ENTER to capture END...")
-            data = shm_mgr.read_array(np.float64, (6,))
+            data = shm_mgr.read_array(np.float64, (7,))
             end_alt = data[0]
-            end_sx = data[1]
-            end_sy = data[2]
+            end_front = data[1]
+            end_sx = data[2]
+            end_sy = data[3]
             
             dx = end_sx - start_sx
             dy = end_sy - start_sy

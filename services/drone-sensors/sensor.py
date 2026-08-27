@@ -28,8 +28,8 @@ else:
 def main():
     provider = SensorProvider()
     
-    # SHM structure: [alt, sx, sy, vx, vy, heartbeat] (6 floats)
-    shm_size = 6 * 8 
+    # SHM structure: [alt, front_dist, sx, sy, vx, vy, heartbeat] (7 floats)
+    shm_size = 7 * 8 
     shm_name = "drone_sensor_data"
 
     hb_shm_name = "system_heartbeats"
@@ -71,16 +71,17 @@ def main():
     print(f"Sensor service started in {DRONE_ENV} mode. Writing to SHM: {shm_name}")
     try:
         while True:
-            # provider.read() returns [altitude, shift_x, shift_y, vel_x, vel_y] (5 values)
+            # provider.read() returns [altitude, front_dist, shift_x, shift_y, vel_x, vel_y] (6 values)
             raw_data = provider.read()
             
-            # Pack into SHM: [alt, sx, sy, vx, vy, heartbeat]
+            # Pack into SHM: [alt, front_dist, sx, sy, vx, vy, heartbeat]
             shm_data = [
                 raw_data[0], # alt
-                raw_data[1], # sx
-                raw_data[2], # sy
-                raw_data[3], # vx
-                raw_data[4], # vy
+                raw_data[1], # front_dist
+                raw_data[2], # sx
+                raw_data[3], # sy
+                raw_data[4], # vx
+                raw_data[5], # vy
                 time.time()  # heartbeat
             ]
             

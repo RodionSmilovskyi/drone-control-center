@@ -6,7 +6,7 @@ class FlightController:
     def __init__(self):
         self.throttle_pid = PIDController(Kp=3.0, Ki=0.1, Kd=1.0, integral_limit=0.5)
         
-        self.hover_throttle = 1580
+        self.hover_throttle = 1625
         self.min_throttle = 1341
         self.max_throttle = 1800
         

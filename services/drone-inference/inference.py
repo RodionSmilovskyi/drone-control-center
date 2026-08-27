@@ -88,7 +88,7 @@ def main():
 
     # Shared Memory for observations
     shm_name = "drone_sensor_data"
-    shm_size = 6 * 8  # 6 doubles
+    shm_size = 7 * 8  # 7 doubles
     shm_mgr = None
 
     # Heartbeat setup
@@ -150,7 +150,7 @@ def main():
                 pass
 
             # 2. Read observation from Shared Memory
-            obs = np.zeros(6, dtype=np.float64)
+            obs = np.zeros(7, dtype=np.float64)
             if shm_mgr is None:
                 try:
                     shm_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
@@ -159,13 +159,13 @@ def main():
             
             if shm_mgr:
                 try:
-                    obs = shm_mgr.read_array(np.float64, (6,))
+                    obs = shm_mgr.read_array(np.float64, (7,))
                 except Exception:
                     shm_mgr.close()
                     shm_mgr = None
 
             # 3. Process if we have new sensor data
-            current_sensor_time = obs[5]
+            current_sensor_time = obs[6]
             current_alt = obs[0]
             if current_alt != last_alt:
                 # Calculate dynamic dt from sensor timestamps

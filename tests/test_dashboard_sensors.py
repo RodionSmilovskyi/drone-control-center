@@ -10,15 +10,15 @@ from core.shared_memory_manager import SharedMemoryManager
 
 def main():
     shm_name = "drone_sensor_data"
-    shm_size = 6 * 8
+    shm_size = 7 * 8
     
-    # Values: [altitude, shift_x, shift_y, velocity_x, velocity_y]
+    # Values: [altitude, front_distance, shift_x, shift_y, velocity_x, velocity_y]
     test_data = [
-        [0.5, 0.1, -0.1, 0.05, -0.05],
-        [0.8, 0.5, 0.5, 0.2, 0.2],
-        [0.2, -0.5, -0.5, -0.2, -0.2],
-        [1.0, 1.0, 1.0, 1.0, 1.0],
-        [0.0, -1.0, -1.0, -1.0, -1.0]
+        [0.5, 1.2, 0.1, -0.1, 0.05, -0.05],
+        [0.8, 0.9, 0.5, 0.5, 0.2, 0.2],
+        [0.2, 0.4, -0.5, -0.5, -0.2, -0.2],
+        [1.0, 1.8, 1.0, 1.0, 1.0, 1.0],
+        [0.0, 0.1, -1.0, -1.0, -1.0, -1.0]
     ]
 
     print(f"Injecting test data into {shm_name}...")
