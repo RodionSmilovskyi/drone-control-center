@@ -4,11 +4,15 @@ from pid_controller import PIDController
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
-        self.throttle_pid = PIDController(Kp=3.0, Ki=0.1, Kd=1.0, integral_limit=0.5)
+        # Initial tuning baseline: Kp=12.0 (~400 PWM/m) for Step A (P-only), Ki and Kd zeroed initially
+        self.throttle_pid = PIDController(Kp=12.0, Ki=0.0, Kd=0.0, integral_limit=1.0)
         
         self.hover_throttle = 1625
         self.min_throttle = 1341
         self.max_throttle = 1800
+        
+        # Ground threshold: ~0.08m normalized (0.08m / 3.0m) to prevent integral windup on ground
+        self.ground_threshold_norm = 0.08 / 3.0
         
         self.reset()
 
@@ -22,7 +26,10 @@ class FlightController:
         desired_roll_norm, desired_pitch_norm, desired_yaw_rate_norm = high_level_action[1:]
         
         self.throttle_pid.setpoint = desired_alt_norm
-        throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt)
+        
+        # Anti-windup: only accumulate integral once airborne past ground threshold
+        enable_integral = current_alt_norm >= self.ground_threshold_norm
+        throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=enable_integral)
         
         rc_throttle = self.hover_throttle + (100 * throttle_pid_out)
 
