@@ -116,7 +116,9 @@ def initialize_sensors(log_f=None):
     return sensor_down, sensor_front, flow
 
 if __name__ == "__main__":
-    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_FILE)
+    logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    log_path = os.path.join(logs_dir, LOG_FILE)
     log_f = open(log_path, "w")
     log_print(f"=== Sensor Diagnostic Check ({time.strftime('%Y-%m-%d %H:%M:%S')}) ===", log_f)
     

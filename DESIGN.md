@@ -55,10 +55,13 @@ drone-control-center/
 │   ├── test_policy_live.py
 │   ├── test_strategic_logic.py
 │   └── test_dashboard_sensors.py
+├── scripts/                         # Legacy/standalone prototype scripts
+│   ├── fc_interface.py / fc_interface_mock.py # Legacy MQTT FC testing utilities
+│   ├── simpleUI.py / rich_ui.py     # Legacy standalone telemetry/manual control consoles
+│   └── inference-example.py         # Standalone TFLite experiment script
+├── logs/                            # Centralized runtime log directory (*.log)
 ├── calibrate_sensors.py             # Interactive CLI tool to calibrate optical flow scale factor
 ├── sensor_check.py                  # Standalone hardware diagnostic script for VL53L1X (down & front) & PMW3901
-├── fc_interface.py / fc_interface_mock.py # Standalone FC testing utilities
-├── simpleUI.py / rich_ui.py         # Standalone / Legacy telemetry and manual control consoles
 ├── dashboard.py                     # Primary Rich TUI Dashboard for live status and control
 ├── drone_logging.py                 # Common logging setup
 ├── requirements-pi.txt              # RPi production Python dependencies
@@ -123,6 +126,7 @@ drone-control-center/
 ### 4.3 Control & Monitoring Dashboard (`dashboard.py`)
 
 A terminal user interface implemented with **Rich**:
+- **Startup Lifecycle:** Automatically truncates all `.log` files in `logs/` upon start so session telemetry and service logs start completely from scratch.
 - **Keyboard Handling:** Non-blocking raw input thread:
   - `a`: Switch to `armed`
   - `d`: Switch to `disarmed`
@@ -140,7 +144,7 @@ A terminal user interface implemented with **Rich**:
 
 - **`sensor_check.py`:** Independent hardware test for I2C and SPI sensors, ensuring addresses, XSHUT toggles, and SPI communication are functioning before launching background daemons.
 - **`calibrate_sensors.py`:** Interactive measurement helper to compute scale factors between optical flow pixel motion and physical distance in meters.
-- **`rich_ui.py` / `simpleUI.py`:** Direct manual RC control utilities over serial MSP for bench testing motors, arming, and Betaflight telemetry reception.
+- **`scripts/rich_ui.py` / `scripts/simpleUI.py`:** Legacy manual RC control utilities over serial MSP for standalone bench testing and telemetry reception.
 
 ---
 

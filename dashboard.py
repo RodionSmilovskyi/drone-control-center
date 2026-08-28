@@ -173,14 +173,21 @@ def keyboard_listener(pub_socket):
 def main():
     console = Console()
     
-    # Clear inference.log if it exists
+    # Clear all .log files in logs/ so logging starts fresh
     try:
-        # Use absolute path relative to this script
-        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inference.log")
-        if os.path.exists(log_path):
-            os.remove(log_path)
+        logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        if os.path.exists(logs_dir):
+            for filename in os.listdir(logs_dir):
+                if filename.endswith(".log"):
+                    file_path = os.path.join(logs_dir, filename)
+                    try:
+                        # Truncate file so active file handles write from scratch
+                        with open(file_path, "w") as f:
+                            pass
+                    except Exception as fe:
+                        console.print(f"[yellow]Warning: Could not clear {filename}: {fe}[/]")
     except Exception as e:
-        console.print(f"[yellow]Warning: Could not clear inference.log: {e}[/]")
+        console.print(f"[yellow]Warning: Could not clear logs directory: {e}[/]")
 
     # Register signals for graceful exit
     signal.signal(signal.SIGINT, signal_handler)

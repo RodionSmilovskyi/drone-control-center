@@ -25,6 +25,15 @@ def setup_logger(name, log_file, level=None):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
+    # Resolve log path to project root logs/ directory if not an absolute path
+    if not os.path.isabs(log_file):
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        logs_dir = os.path.join(project_root, "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file = os.path.join(logs_dir, log_file)
+    else:
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
     # Create a file handler
     file_handler = WatchedFileHandler(log_file)
     file_handler.setLevel(level)
