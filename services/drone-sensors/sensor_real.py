@@ -53,8 +53,8 @@ class SensorReal:
         # Normalization and Calibration
         self.MAX_VELOCITY = 5.0
         self.MAX_XY_SHIFT = MAX_XY_SHIFT # From strategic_agent
-        self.MAX_ALTITUDE = 1.0
-        self.MAX_FRONT_DISTANCE = 2.0
+        self.MAX_ALTITUDE = 3.0
+        self.MAX_FRONT_DISTANCE = 3.0
         
         # Deadbands and Smoothing
         self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
