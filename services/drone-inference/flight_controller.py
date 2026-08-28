@@ -4,8 +4,8 @@ from pid_controller import PIDController
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
-        # Initial tuning baseline: Kp=12.0 (~400 PWM/m) for Step A (P-only), Ki and Kd zeroed initially
-        self.throttle_pid = PIDController(Kp=12.0, Ki=0.0, Kd=0.0, integral_limit=1.0)
+        # Step B tuning: Kp=10.0, Kd=2.5 (~83 PWM damping per m/s climb) to suppress altitude oscillation
+        self.throttle_pid = PIDController(Kp=10.0, Ki=0.0, Kd=2.5, integral_limit=1.0)
         
         self.hover_throttle = 1625
         self.min_throttle = 1341
