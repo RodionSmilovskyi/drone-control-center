@@ -2,6 +2,7 @@ import os
 import time
 import sys
 import zmq
+import json
 import numpy as np
 import signal
 import argparse
@@ -15,6 +16,8 @@ from flight_controller import FlightController
 
 # Global flag for shutdown
 shutting_down = False
+MAX_ALTITUDE = 3.0  # Max altitude in meters, aligned with sensor_real.py
+DEFAULT_TARGET_ALT = 0.4
 
 def signal_handler(sig, frame):
     global shutting_down
@@ -36,17 +39,23 @@ def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     fc.reset()
     return [1500, 1500, 900, 1500, 1800, 1800]
 
-def handle_ai(obs: np.ndarray, fc: FlightController, dt: float) -> list:
+def handle_ai(obs: np.ndarray, fc: FlightController, dt: float, target_alt: float = DEFAULT_TARGET_ALT) -> list:
     """
-    Mode: AI. Returns RC commands from FlightController with hardcoded action.
+    Mode: AI. Returns RC commands from FlightController with dynamic target altitude.
+    Maps target altitude (0..MAX_ALTITUDE) to NN action [-1, 1], and current altitude to [0, 1].
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
-    # Hardcoded high-level action: [desired_alt, roll, pitch, yaw_rate]
-    # action[0]=0.3 maps to desired_alt_norm = (-0.2+1)/2 = 0.4
-    high_level_action = np.array([-0.2, 0.0, 0.0, 0.0], dtype=np.float32)
+    # 1. Normalize target altitude to [0, 1]
+    target_alt_norm = float(np.clip(target_alt / MAX_ALTITUDE, 0.0, 1.0))
     
-    # current altitude is at obs[0]
-    current_alt_norm = obs[0]
+    # 2. Map normalized altitude [0, 1] to NN action in [-1, 1]
+    action_alt = (target_alt_norm * 2.0) - 1.0
+    
+    # High-level action: [desired_alt, roll, pitch, yaw_rate]
+    high_level_action = np.array([action_alt, 0.0, 0.0, 0.0], dtype=np.float32)
+    
+    # 3. Normalize current sensor altitude obs[0] to [0, 1]
+    current_alt_norm = float(np.clip(obs[0] / MAX_ALTITUDE, 0.0, 1.0))
     
     # Compute low-level RC commands (4 channels: throttle, roll, pitch, yaw)
     low_level_rc = fc.compute_rc_commands(high_level_action, current_alt_norm, dt=dt)
@@ -97,6 +106,7 @@ def main():
     hb_shm_mgr = None
 
     current_mode = "disarmed"
+    target_alt = DEFAULT_TARGET_ALT
     
     # Wait for Sensors and FC services to be online before starting
     logger.info("Waiting for Sensors and FC services to be online...")
@@ -140,12 +150,29 @@ def main():
                     hb_shm_mgr.close()
                     hb_shm_mgr = None
 
-            # 1. Non-blocking read mode
+            # 1. Non-blocking read mode and target altitude
             try:
-                new_mode = mode_sub.recv_string(flags=zmq.NOBLOCK)
-                if new_mode:
-                    current_mode = new_mode
-                    logger.info(f"Mode changed to: {current_mode}")
+                msg = mode_sub.recv_string(flags=zmq.NOBLOCK)
+                if msg:
+                    if msg.startswith("{"):
+                        try:
+                            payload = json.loads(msg)
+                            if "mode" in payload:
+                                new_mode = payload["mode"]
+                                if new_mode != current_mode:
+                                    current_mode = new_mode
+                                    logger.info(f"Mode changed to: {current_mode}")
+                            if "target_alt" in payload:
+                                new_alt = float(payload["target_alt"])
+                                if new_alt != target_alt:
+                                    target_alt = new_alt
+                                    logger.info(f"Target altitude changed to: {target_alt:.2f}m")
+                        except Exception as je:
+                            logger.warning(f"Failed to parse JSON mode msg '{msg}': {je}")
+                    else:
+                        if msg != current_mode:
+                            current_mode = msg
+                            logger.info(f"Mode changed to: {current_mode}")
             except zmq.Again:
                 pass
 
@@ -181,7 +208,7 @@ def main():
                 if current_mode == "armed":
                     rc_commands = handle_armed(obs, fc)
                 elif current_mode == "ai":
-                    rc_commands = handle_ai(obs, fc, dt)
+                    rc_commands = handle_ai(obs, fc, dt, target_alt)
                 else:
                     rc_commands = handle_disarmed(obs, fc)
 

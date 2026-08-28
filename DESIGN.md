@@ -108,11 +108,11 @@ drone-control-center/
 - **Execution Rate:** 100 Hz.
 - **Inputs:**
   - `drone_sensor_data` (Shared Memory)
-  - Control mode updates from ZMQ subscriber `tcp://127.0.0.1:5555`.
+  - Control mode and dynamic target altitude updates from ZMQ subscriber `tcp://127.0.0.1:5555` (JSON payload `{"mode": "...", "target_alt": float}` with fallback to plain mode string).
 - **Operating Modes:**
   - `disarmed`: Sends safe disarm commands `[1500, 1500, 900, 1500, 1000, 1000]`.
   - `armed`: Sends armed idle commands `[1500, 1500, 900, 1500, 1800, 1800]`.
-  - `ai`: Computes PID-controlled throttle to maintain altitude setpoint (with hover throttle baseline = `1625`, bounded `[1341, 1800]`) alongside roll/pitch/yaw commands.
+  - `ai`: Computes PID-controlled throttle to maintain dynamic altitude setpoint (default `0.4m`, bounded `[0.1, 2.5m]`, with hover throttle baseline = `1625`, bounded `[1341, 1800]`) alongside roll/pitch/yaw commands. Altitude is normalized via $z_{\text{norm}} = z / \text{MAX\_ALTITUDE}$ (`MAX_ALTITUDE = 3.0m`), mapped to high-level action range $[-1, 1]$ via $a_{\text{alt}} = 2 \cdot z_{\text{norm}} - 1$.
 - **Output:** Publishes RC packet `[roll, pitch, throttle, yaw, aux1, aux2]` over ZMQ PUB `tcp://127.0.0.1:5556`.
 
 #### C. `drone-fc` (`services/drone-fc/`)
@@ -131,12 +131,14 @@ A terminal user interface implemented with **Rich**:
   - `a`: Switch to `armed`
   - `d`: Switch to `disarmed`
   - `x`: Switch to `ai` (autonomous hover/flight)
+  - `w`: Increment target altitude by `+0.05m` (clamped to max `2.5m`)
+  - `s`: Decrement target altitude by `-0.05m` (clamped to min `0.1m`)
   - `q`: Graceful shutdown
 - **Live Panels:**
   - **Statuses:** Real-time health monitoring of all 3 microservices based on shared memory heartbeat threshold (< 1.0s = OK).
   - **Live Sensor Data:** Altitude, X/Y drift, normalized velocity, and heartbeat latency.
   - **RC Commands:** Active pulse-width values dispatched to the flight controller.
-  - **System Status:** Prominently displays current flight mode (`DISARMED`, `ARMED`, `AI`).
+  - **System Status:** Prominently displays current flight mode (`DISARMED`, `ARMED`, `AI`), active target altitude (`Target Alt: X.XXm`), and RC pulse summary.
 
 ---
 
