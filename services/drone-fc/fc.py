@@ -29,10 +29,18 @@ def main():
     logger = setup_logger("drone-fc", "fc.log")
     logger.info(f"Starting drone-fc service in {DRONE_ENV} mode...")
 
-    try:
-        provider = FCProvider()
-    except Exception as e:
-        logger.error(f"Failed to initialize FC provider: {e}")
+    provider = None
+    for attempt in range(1, 6):
+        try:
+            logger.info(f"Initializing FC provider (attempt {attempt}/5)...")
+            provider = FCProvider()
+            break
+        except Exception as e:
+            logger.warning(f"FC provider initialization attempt {attempt} failed: {e}")
+            time.sleep(1.0)
+
+    if provider is None:
+        logger.critical("Failed to initialize FC provider after multiple attempts.")
         sys.exit(1)
     
     # Heartbeat Setup (Index 2 for FC)

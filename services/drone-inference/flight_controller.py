@@ -11,10 +11,10 @@ class FlightController:
         self.hover_throttle = 1625
         self.min_throttle = 1341
         self.max_throttle = 1800
-        self.max_pid_correction = 60.0  # Limits throttle swing to [1565, 1685] to prevent ceiling strikes
+        self.max_pid_correction = 100.0  # Gives throttle range [1525, 1725] to compensate for battery sag
         
-        # Ground threshold: ~0.08m normalized (0.08m / 3.0m) to prevent integral windup on ground
-        self.ground_threshold_norm = 0.08 / 3.0
+        # Ground threshold: ~0.035m (landing gear height ~0.013m) to enable integral once airborne
+        self.ground_threshold_norm = 0.035 / 3.0
         
         # Max climb/descent slew rate: 0.25 m/s (~0.083 normalized units/sec) to eliminate takeoff catapult
         self.max_climb_rate_norm = 0.25 / 3.0
