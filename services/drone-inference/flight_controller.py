@@ -4,12 +4,13 @@ from pid_controller import PIDController
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
-        # Step B tuning: Kp=10.0, Kd=2.5 (~83 PWM damping per m/s climb) to suppress altitude oscillation
-        self.throttle_pid = PIDController(Kp=10.0, Ki=0.0, Kd=2.5, integral_limit=1.0)
+        # Confined-space tuning: Kp=6.0, Kd=1.2 with clamped authority (+/-60 PWM)
+        self.throttle_pid = PIDController(Kp=6.0, Ki=0.0, Kd=1.2, integral_limit=1.0)
         
         self.hover_throttle = 1625
         self.min_throttle = 1341
         self.max_throttle = 1800
+        self.max_pid_correction = 60.0  # Limits throttle swing to [1565, 1685] to prevent ceiling strikes
         
         # Ground threshold: ~0.08m normalized (0.08m / 3.0m) to prevent integral windup on ground
         self.ground_threshold_norm = 0.08 / 3.0
@@ -31,7 +32,9 @@ class FlightController:
         enable_integral = current_alt_norm >= self.ground_threshold_norm
         throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=enable_integral)
         
-        rc_throttle = self.hover_throttle + (100 * throttle_pid_out)
+        # Bound PID correction to prevent explosive acceleration/deceleration in enclosed spaces
+        pid_correction = np.clip(100.0 * throttle_pid_out, -self.max_pid_correction, self.max_pid_correction)
+        rc_throttle = self.hover_throttle + pid_correction
 
         # Map desired roll, pitch, and yaw rate from [-1, 1] to [1000, 2000]
         rc_roll = 1500 + 500 * desired_roll_norm

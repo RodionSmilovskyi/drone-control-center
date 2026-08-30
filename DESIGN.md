@@ -112,7 +112,7 @@ drone-control-center/
 - **Operating Modes:**
   - `disarmed`: Sends safe disarm commands `[1500, 1500, 900, 1500, 1000, 1000]`.
   - `armed`: Sends armed idle commands `[1500, 1500, 900, 1500, 1800, 1800]`.
-  - `ai`: Computes PID-controlled throttle to maintain dynamic altitude setpoint (default `0.4m`, bounded `[0.1, 2.5m]`, with hover throttle baseline = `1625`, bounded `[1341, 1800]`) alongside roll/pitch/yaw commands. Altitude is normalized via $z_{\text{norm}} = z / \text{MAX\_ALTITUDE}$ (`MAX_ALTITUDE = 3.0m`), mapped to high-level action range $[-1, 1]$ via $a_{\text{alt}} = 2 \cdot z_{\text{norm}} - 1$. The PID controller incorporates derivative-on-measurement with initial-cycle kick prevention and ground-threshold anti-windup (suppressing integral accumulation below 0.08m).
+  - `ai`: Computes PID-controlled throttle to maintain dynamic altitude setpoint (default `0.4m`, bounded `[0.1, 2.5m]`, with hover throttle baseline = `1625`, bounded `[1341, 1800]`) alongside roll/pitch/yaw commands. Altitude is normalized via $z_{\text{norm}} = z / \text{MAX\_ALTITUDE}$ (`MAX_ALTITUDE = 3.0m`), mapped to high-level action range $[-1, 1]$ via $a_{\text{alt}} = 2 \cdot z_{\text{norm}} - 1$. The PID controller incorporates derivative-on-measurement with initial-cycle kick prevention, ground-threshold anti-windup (suppressing integral accumulation below 0.08m), and bounded PID correction authority ($\pm 60$ PWM) to prevent ballistic ceiling/floor collisions in confined spaces. Sensor altitude filtering utilizes $\alpha = 0.6$ for low-latency feedback.
 - **Output:** Publishes RC packet `[roll, pitch, throttle, yaw, aux1, aux2]` over ZMQ PUB `tcp://127.0.0.1:5556`.
 
 #### C. `drone-fc` (`services/drone-fc/`)

@@ -59,7 +59,7 @@ class SensorReal:
         # Deadbands and Smoothing
         self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
         self.ALPHA_FLOW = 0.2    # Slightly faster response
-        self.ALPHA_ALT = 0.3
+        self.ALPHA_ALT = 0.6     # Lower phase lag for altitude feedback
         self.ALPHA_FRONT = 0.3
         self.ALPHA_VEL = 0.2
 
