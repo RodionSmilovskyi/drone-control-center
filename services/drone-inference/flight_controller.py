@@ -4,14 +4,14 @@ from pid_controller import PIDController
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
-        # Confined-space tuning with soft takeoff setpoint ramping:
-        # Kp=8.0, Ki=1.0, Kd=2.0 with bounded integral authority (+/-50 PWM) to eliminate steady-state droop
-        self.throttle_pid = PIDController(Kp=8.0, Ki=1.0, Kd=2.0, integral_limit=0.5)
+        # Confined-space tuning paired with Betaflight vbat_sag_compensation:
+        # Kp=8.0, Ki=0.8, Kd=2.0 with bounded integral authority (+/-40 PWM)
+        self.throttle_pid = PIDController(Kp=8.0, Ki=0.8, Kd=2.0, integral_limit=0.5)
         
-        self.hover_throttle = 1625
+        self.hover_throttle = 1580
         self.min_throttle = 1341
         self.max_throttle = 1800
-        self.max_pid_correction = 100.0  # Gives throttle range [1525, 1725] to compensate for battery sag
+        self.max_pid_correction = 120.0  # Gives throttle range [1460, 1700] for balanced climb and descent authority
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
         self.ground_threshold_norm = 0.020 / 3.0

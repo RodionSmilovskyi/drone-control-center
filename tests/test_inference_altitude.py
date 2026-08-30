@@ -32,7 +32,7 @@ class TestInferenceAltitude(unittest.TestCase):
         # Prime first frame to establish last_measurement
         handle_ai(obs, self.fc, dt=0.033, target_alt=0.4)
         
-        # At steady state at setpoint, PID error is 0, throttle should equal hover_throttle (1625)
+        # At steady state at setpoint, PID error is 0, throttle should equal hover_throttle
         rc = handle_ai(obs, self.fc, dt=0.033, target_alt=0.4)
         self.assertEqual(len(rc), 6)
         roll, pitch, throttle, yaw, aux1, aux2 = rc
@@ -41,25 +41,25 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(yaw, 1500)
         self.assertEqual(aux1, 1800)
         self.assertEqual(aux2, 1800)
-        self.assertEqual(throttle, 1625)
+        self.assertEqual(throttle, self.fc.hover_throttle)
 
     def test_handle_ai_below_setpoint(self):
-        # Below target (target=0.8m, current=0.2m) -> should increase throttle above 1625
+        # Below target (target=0.8m, current=0.2m) -> should increase throttle above hover_throttle
         obs = np.array([0.2, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         self.fc.reset()
         handle_ai(obs, self.fc, dt=0.033, target_alt=0.8)
         rc = handle_ai(obs, self.fc, dt=0.033, target_alt=0.8)
         throttle = rc[2]
-        self.assertGreater(throttle, 1625)
+        self.assertGreater(throttle, self.fc.hover_throttle)
 
     def test_handle_ai_above_setpoint(self):
-        # Above target (target=0.4m, current=1.0m) -> should decrease throttle below 1625
+        # Above target (target=0.4m, current=1.0m) -> should decrease throttle below hover_throttle
         obs = np.array([1.0, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         self.fc.reset()
         handle_ai(obs, self.fc, dt=0.033, target_alt=0.4)
         rc = handle_ai(obs, self.fc, dt=0.033, target_alt=0.4)
         throttle = rc[2]
-        self.assertLess(throttle, 1625)
+        self.assertLess(throttle, self.fc.hover_throttle)
 
     def test_json_parsing_logic(self):
         payload = json.dumps({"mode": "ai", "target_alt": 0.65})
