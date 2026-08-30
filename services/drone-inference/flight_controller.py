@@ -5,8 +5,8 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning with soft takeoff setpoint ramping:
-        # Kp=8.0, Ki=0.5, Kd=2.2 with bounded integral authority (+/-20 PWM) to eliminate windup cycling
-        self.throttle_pid = PIDController(Kp=8.0, Ki=0.5, Kd=2.2, integral_limit=0.4)
+        # Kp=8.0, Ki=1.0, Kd=2.0 with bounded integral authority (+/-50 PWM) to eliminate steady-state droop
+        self.throttle_pid = PIDController(Kp=8.0, Ki=1.0, Kd=2.0, integral_limit=0.5)
         
         self.hover_throttle = 1625
         self.min_throttle = 1341
