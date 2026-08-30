@@ -4,8 +4,9 @@ from pid_controller import PIDController
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
-        # Confined-space tuning: Kp=6.0, Kd=1.2 with clamped authority (+/-60 PWM)
-        self.throttle_pid = PIDController(Kp=6.0, Ki=0.0, Kd=1.2, integral_limit=1.0)
+        # Confined-space tuning with soft takeoff setpoint ramping:
+        # Kp=6.0, Ki=0.8, Kd=1.5 with clamped authority (+/-60 PWM)
+        self.throttle_pid = PIDController(Kp=6.0, Ki=0.8, Kd=1.5, integral_limit=0.5)
         
         self.hover_throttle = 1625
         self.min_throttle = 1341
@@ -15,10 +16,15 @@ class FlightController:
         # Ground threshold: ~0.08m normalized (0.08m / 3.0m) to prevent integral windup on ground
         self.ground_threshold_norm = 0.08 / 3.0
         
+        # Max climb/descent slew rate: 0.25 m/s (~0.083 normalized units/sec) to eliminate takeoff catapult
+        self.max_climb_rate_norm = 0.25 / 3.0
+        self.current_setpoint_norm = None
+        
         self.reset()
 
     def reset(self):
         self.throttle_pid.reset()
+        self.current_setpoint_norm = None
     
     def compute_rc_commands(self, high_level_action: np.ndarray, current_alt_norm: float, dt: float) -> np.ndarray:
         # high_level_action: [desired_alt, desired_roll, desired_pitch, desired_yaw_rate]
@@ -26,7 +32,15 @@ class FlightController:
         desired_alt_norm = (high_level_action[0] + 1) / 2
         desired_roll_norm, desired_pitch_norm, desired_yaw_rate_norm = high_level_action[1:]
         
-        self.throttle_pid.setpoint = desired_alt_norm
+        # Smooth setpoint slew to eliminate catapult takeoff and abrupt steps
+        if self.current_setpoint_norm is None:
+            self.current_setpoint_norm = current_alt_norm
+        else:
+            max_step = self.max_climb_rate_norm * dt
+            delta = desired_alt_norm - self.current_setpoint_norm
+            self.current_setpoint_norm += np.clip(delta, -max_step, max_step)
+        
+        self.throttle_pid.setpoint = self.current_setpoint_norm
         
         # Anti-windup: only accumulate integral once airborne past ground threshold
         enable_integral = current_alt_norm >= self.ground_threshold_norm
