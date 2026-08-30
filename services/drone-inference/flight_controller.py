@@ -33,10 +33,11 @@ class FlightController:
         desired_roll_norm, desired_pitch_norm, desired_yaw_rate_norm = high_level_action[1:]
         
         # Smooth setpoint slew to eliminate catapult takeoff and abrupt steps
+        clamped_dt = min(max(dt, 0.001), 0.05)
         if self.current_setpoint_norm is None:
             self.current_setpoint_norm = current_alt_norm
         else:
-            max_step = self.max_climb_rate_norm * dt
+            max_step = self.max_climb_rate_norm * clamped_dt
             delta = desired_alt_norm - self.current_setpoint_norm
             self.current_setpoint_norm += np.clip(delta, -max_step, max_step)
         

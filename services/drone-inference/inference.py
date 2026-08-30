@@ -194,7 +194,7 @@ def main():
             # 3. Process if we have new sensor data
             current_sensor_time = obs[6]
             current_alt = obs[0]
-            if current_alt != last_alt:
+            if current_sensor_time != last_sensor_time and current_sensor_time > 0:
                 # Calculate dynamic dt from sensor timestamps
                 if last_sensor_time == 0:
                     dt = 1/30.0 # Default for first frame
@@ -203,7 +203,7 @@ def main():
                 
                 last_sensor_time = current_sensor_time
                 last_alt = current_alt
-                dt = max(dt, 0.001)  # Safeguard
+                dt = float(np.clip(dt, 0.001, 0.05))  # Clamp dt to [1ms, 50ms] to prevent slew step spikes
 
                 if current_mode == "armed":
                     rc_commands = handle_armed(obs, fc)
