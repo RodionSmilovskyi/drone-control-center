@@ -5,13 +5,13 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # Kp=8.0, Ki=0.8, Kd=2.0 with bounded integral authority (+/-40 PWM)
-        self.throttle_pid = PIDController(Kp=8.0, Ki=0.8, Kd=2.0, integral_limit=0.5)
+        # True hover thrust with sag compensation is ~1530 PWM
+        self.throttle_pid = PIDController(Kp=6.0, Ki=0.6, Kd=2.2, integral_limit=0.5)
         
-        self.hover_throttle = 1580
+        self.hover_throttle = 1530
         self.min_throttle = 1341
         self.max_throttle = 1800
-        self.max_pid_correction = 120.0  # Gives throttle range [1460, 1700] for balanced climb and descent authority
+        self.max_pid_correction = 120.0  # Gives throttle range [1410, 1650] for balanced authority
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
         self.ground_threshold_norm = 0.020 / 3.0
