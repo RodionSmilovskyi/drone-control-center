@@ -16,8 +16,6 @@ class PIDController:
         if enable_integral:
             self.integral += error * dt
             self.integral = max(-self.integral_limit, min(self.integral_limit, self.integral))
-        else:
-            self.integral = 0.0
         
         if self.last_measurement is not None and dt > 0:
             derivative = -(measurement - self.last_measurement) / dt
