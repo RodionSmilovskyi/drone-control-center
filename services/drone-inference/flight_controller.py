@@ -6,12 +6,12 @@ class FlightController:
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
         # True hover thrust with sag compensation is ~1555-1565 PWM
-        self.throttle_pid = PIDController(Kp=6.0, Ki=0.8, Kd=2.2, integral_limit=0.6)
+        self.throttle_pid = PIDController(Kp=5.0, Ki=0.4, Kd=2.8, integral_limit=0.35)
         
         self.hover_throttle = 1555
         self.min_throttle = 1341
         self.max_throttle = 1800
-        self.max_pid_correction = 120.0  # Gives throttle range [1435, 1675] for balanced authority
+        self.max_pid_correction = 55.0  # Gives throttle range [1500, 1610] to eliminate ground-effect oscillation
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
         self.ground_threshold_norm = 0.020 / 3.0
@@ -28,10 +28,12 @@ class FlightController:
     
     def compute_rc_commands(self, high_level_action: np.ndarray, current_alt_norm: float, dt: float) -> np.ndarray:
         # high_level_action: [desired_alt, desired_roll, desired_pitch, desired_yaw_rate]
-        # action[0] is in [-1, 1], remap it to [0, 1] for altitude setpoint
-        desired_alt_norm = (high_level_action[0] + 1) / 2
-        desired_roll_norm, desired_pitch_norm, desired_yaw_rate_norm = high_level_action[1:]
-        
+        # desired_alt is in [-1, 1], map to [0, 1] normalized altitude
+        desired_alt_norm = (high_level_action[0] + 1.0) / 2.0
+        desired_roll_norm = high_level_action[1]
+        desired_pitch_norm = high_level_action[2]
+        desired_yaw_rate_norm = high_level_action[3]
+
         # Smooth setpoint slew to eliminate catapult takeoff and abrupt steps
         clamped_dt = min(max(dt, 0.001), 0.05)
         if self.current_setpoint_norm is None:
@@ -43,8 +45,9 @@ class FlightController:
         
         self.throttle_pid.setpoint = self.current_setpoint_norm
         
-        # Anti-windup: only accumulate integral once airborne past ground threshold
-        enable_integral = current_alt_norm >= self.ground_threshold_norm
+        # Anti-windup: only accumulate integral once airborne and within 8cm of current setpoint
+        near_setpoint = abs(current_alt_norm - self.current_setpoint_norm) <= (0.08 / 3.0)
+        enable_integral = (current_alt_norm >= self.ground_threshold_norm) and near_setpoint
         throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=enable_integral)
         
         # Bound PID correction to prevent explosive acceleration/deceleration in enclosed spaces
