@@ -6,12 +6,16 @@ class FlightController:
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
         # True hover thrust with sag compensation is ~1555-1565 PWM
-        self.throttle_pid = PIDController(Kp=5.0, Ki=0.4, Kd=2.8, integral_limit=0.35)
+        self.throttle_pid = PIDController(Kp=5.0, Ki=0.4, Kd=2.8, integral_limit=1.2)
         
         self.hover_throttle = 1555
         self.min_throttle = 1341
         self.max_throttle = 1800
-        self.max_pid_correction = 55.0  # Gives throttle range [1500, 1610] to eliminate ground-effect oscillation
+        # Asymmetrical authority: tight descent authority [-50] to eliminate ground-effect bounces,
+        # expanded climb headroom [+130] for battery sag compensation (throttle range [1505, 1685])
+        self.max_climb_correction = 130.0
+        self.max_descent_correction = -50.0
+        self.max_pid_correction = self.max_climb_correction
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
         self.ground_threshold_norm = 0.020 / 3.0
@@ -45,13 +49,17 @@ class FlightController:
         
         self.throttle_pid.setpoint = self.current_setpoint_norm
         
-        # Anti-windup: only accumulate integral once airborne and within 8cm of current setpoint
-        near_setpoint = abs(current_alt_norm - self.current_setpoint_norm) <= (0.08 / 3.0)
-        enable_integral = (current_alt_norm >= self.ground_threshold_norm) and near_setpoint
+        # Anti-windup: accumulate integral once airborne past ground threshold.
+        # Below setpoint: allow continuous integral accumulation so hover throttle adapts as battery sags.
+        # Above setpoint: freeze integral if floating > 8cm over target to prevent negative windup.
+        is_airborne = current_alt_norm >= self.ground_threshold_norm
+        below_or_near = (current_alt_norm <= self.current_setpoint_norm) or (abs(current_alt_norm - self.current_setpoint_norm) <= (0.08 / 3.0))
+        enable_integral = is_airborne and below_or_near
         throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=enable_integral)
         
-        # Bound PID correction to prevent explosive acceleration/deceleration in enclosed spaces
-        pid_correction = np.clip(100.0 * throttle_pid_out, -self.max_pid_correction, self.max_pid_correction)
+        # Asymmetrical PID bounds: tight descent authority [-50] to eliminate ground bounce,
+        # expanded climb headroom [+130] for battery sag compensation (throttle up to ~1685 PWM)
+        pid_correction = np.clip(100.0 * throttle_pid_out, self.max_descent_correction, self.max_climb_correction)
         rc_throttle = self.hover_throttle + pid_correction
 
         # Map desired roll, pitch, and yaw rate from [-1, 1] to [1000, 2000]
