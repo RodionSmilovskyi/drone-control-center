@@ -5,16 +5,16 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # True hover thrust with sag compensation is ~1565-1595 PWM
+        # True hover thrust on fresh pack is ~1535-1545 PWM; integrator trims upward as battery sags
         self.throttle_pid = PIDController(Kp=7.5, Ki=1.0, Kd=2.8, integral_limit=1.2)
         
-        self.hover_throttle = 1570
+        self.hover_throttle = 1540
         self.min_throttle = 1341
         self.max_throttle = 1800
-        # Asymmetrical authority: tight descent authority [-50] to eliminate ground-effect bounces,
-        # expanded climb headroom [+130] for battery sag compensation (throttle range [1520, 1700])
-        self.max_climb_correction = 130.0
-        self.max_descent_correction = -50.0
+        # Asymmetrical authority: descent authority [-75] allows decisive braking down to 1465 PWM
+        # without motor cut/freefall, expanded climb headroom [+140] for battery sag (throttle up to 1680 PWM)
+        self.max_climb_correction = 140.0
+        self.max_descent_correction = -75.0
         self.max_pid_correction = self.max_climb_correction
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
@@ -47,6 +47,11 @@ class FlightController:
             delta = desired_alt_norm - self.current_setpoint_norm
             self.current_setpoint_norm += np.clip(delta, -max_step, max_step)
         
+        # Ground anchor: prevent setpoint from racing ahead while resting on the deck
+        if current_alt_norm < self.ground_threshold_norm:
+            max_ground_setpoint = current_alt_norm + (0.02 / 3.0)
+            self.current_setpoint_norm = min(self.current_setpoint_norm, max_ground_setpoint)
+
         self.throttle_pid.setpoint = self.current_setpoint_norm
         
         # Anti-windup: accumulate integral once airborne past ground threshold.
