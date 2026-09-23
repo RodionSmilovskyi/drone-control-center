@@ -19,7 +19,7 @@ class PIDController:
         error = self.setpoint - measurement
         if enable_integral:
             self.integral += error * dt
-            self.integral = max(-self.integral_limit, min(self.integral_limit, self.integral))
+            self.integral = max(0.0, min(self.integral_limit, self.integral))
         
         if self.last_measurement is not None:
             if measurement != self.last_measurement:

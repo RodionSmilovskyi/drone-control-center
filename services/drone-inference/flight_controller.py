@@ -5,14 +5,14 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # True hover thrust with sag compensation is ~1555-1565 PWM
-        self.throttle_pid = PIDController(Kp=5.0, Ki=0.4, Kd=2.8, integral_limit=1.2)
+        # True hover thrust with sag compensation is ~1565-1595 PWM
+        self.throttle_pid = PIDController(Kp=7.5, Ki=1.0, Kd=2.8, integral_limit=1.2)
         
-        self.hover_throttle = 1555
+        self.hover_throttle = 1570
         self.min_throttle = 1341
         self.max_throttle = 1800
         # Asymmetrical authority: tight descent authority [-50] to eliminate ground-effect bounces,
-        # expanded climb headroom [+130] for battery sag compensation (throttle range [1505, 1685])
+        # expanded climb headroom [+130] for battery sag compensation (throttle range [1520, 1700])
         self.max_climb_correction = 130.0
         self.max_descent_correction = -50.0
         self.max_pid_correction = self.max_climb_correction
@@ -51,10 +51,9 @@ class FlightController:
         
         # Anti-windup: accumulate integral once airborne past ground threshold.
         # Below setpoint: allow continuous integral accumulation so hover throttle adapts as battery sags.
-        # Above setpoint: freeze integral if floating > 8cm over target to prevent negative windup.
+        # Above setpoint: decay integral back towards 0 without negative windup.
         is_airborne = current_alt_norm >= self.ground_threshold_norm
-        below_or_near = (current_alt_norm <= self.current_setpoint_norm) or (abs(current_alt_norm - self.current_setpoint_norm) <= (0.08 / 3.0))
-        enable_integral = is_airborne and below_or_near
+        enable_integral = is_airborne
         throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=enable_integral)
         
         # Asymmetrical PID bounds: tight descent authority [-50] to eliminate ground bounce,
