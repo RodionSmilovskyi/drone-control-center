@@ -5,23 +5,23 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # True hover thrust on fresh pack is ~1535-1545 PWM; integrator trims upward as battery sags
-        self.throttle_pid = PIDController(Kp=7.5, Ki=1.0, Kd=2.8, integral_limit=1.2)
+        # Balanced hover baseline: trims downward on fresh pack (to ~1515-1535) and upward on sag (to ~1670)
+        self.throttle_pid = PIDController(Kp=7.5, Ki=1.0, Kd=2.8, integral_limit=1.2, integral_min=-0.35)
         
-        self.hover_throttle = 1540
+        self.hover_throttle = 1550
         self.min_throttle = 1341
         self.max_throttle = 1800
-        # Asymmetrical authority: descent authority [-75] allows decisive braking down to 1465 PWM
-        # without motor cut/freefall, expanded climb headroom [+140] for battery sag (throttle up to 1680 PWM)
-        self.max_climb_correction = 140.0
-        self.max_descent_correction = -75.0
+        # Asymmetrical authority: descent authority [-55] keeps floor at safe 1495 PWM (no motor drop),
+        # expanded climb headroom [+130] for battery sag (throttle up to 1680 PWM)
+        self.max_climb_correction = 130.0
+        self.max_descent_correction = -55.0
         self.max_pid_correction = self.max_climb_correction
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
         self.ground_threshold_norm = 0.020 / 3.0
         
-        # Max climb/descent slew rate: 0.25 m/s (~0.083 normalized units/sec) to eliminate takeoff catapult
-        self.max_climb_rate_norm = 0.25 / 3.0
+        # Slew rate: 0.60 m/s (~0.20 normalized units/sec) to smoothly lead climb without pursuit lag
+        self.max_climb_rate_norm = 0.60 / 3.0
         self.current_setpoint_norm = None
         
         self.reset()
@@ -46,11 +46,6 @@ class FlightController:
             max_step = self.max_climb_rate_norm * clamped_dt
             delta = desired_alt_norm - self.current_setpoint_norm
             self.current_setpoint_norm += np.clip(delta, -max_step, max_step)
-        
-        # Ground anchor: prevent setpoint from racing ahead while resting on the deck
-        if current_alt_norm < self.ground_threshold_norm:
-            max_ground_setpoint = current_alt_norm + (0.02 / 3.0)
-            self.current_setpoint_norm = min(self.current_setpoint_norm, max_ground_setpoint)
 
         self.throttle_pid.setpoint = self.current_setpoint_norm
         

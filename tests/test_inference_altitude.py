@@ -96,21 +96,22 @@ class TestInferenceAltitude(unittest.TestCase):
         i_after = self.fc.throttle_pid.integral
         self.assertGreater(i_after, i_initial, "Integral must accumulate when below setpoint to adapt to battery sag")
 
-    def test_ground_anchor_prevents_setpoint_runaway_on_deck(self):
-        # When drone is on the ground (0.01m), setpoint should not run away to 2.0m while resting on the deck
+    def test_bidirectional_integral_trimming(self):
+        # Verify integral can trim downward for fresh battery but respects integral_min
         self.fc.reset()
-        target_alt = 2.0
-        ground_alt = 0.01
-        obs = np.array([ground_alt, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
-        
-        # Step for 100 frames (~3.3 seconds)
-        for _ in range(100):
-            rc = handle_ai(obs, self.fc, dt=0.033, target_alt=target_alt)
-        
-        # Max setpoint on ground is clamped to current_alt + 2cm (0.03m / 3.0 = 0.01 norm)
-        # Error can be at most 0.02m (0.0066 norm), so P-term <= 7.5 * 0.0066 * 100 = ~5 PWM
-        self.assertLessEqual(rc[2], self.fc.hover_throttle + 10)
-        self.assertLessEqual(self.fc.current_setpoint_norm * MAX_ALTITUDE, ground_alt + 0.025)
+        obs_high = np.array([0.6, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        for _ in range(50):
+            handle_ai(obs_high, self.fc, dt=0.033, target_alt=0.4)
+        self.assertGreaterEqual(self.fc.throttle_pid.integral, self.fc.throttle_pid.integral_min)
+        self.assertLess(self.fc.throttle_pid.integral, 0.0)
+
+        # Verify integral can trim upward for battery sag up to integral_limit
+        self.fc.reset()
+        obs_low = np.array([0.2, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        for _ in range(50):
+            handle_ai(obs_low, self.fc, dt=0.033, target_alt=0.4)
+        self.assertLessEqual(self.fc.throttle_pid.integral, self.fc.throttle_pid.integral_limit)
+        self.assertGreater(self.fc.throttle_pid.integral, 0.0)
 
 if __name__ == "__main__":
     unittest.main()

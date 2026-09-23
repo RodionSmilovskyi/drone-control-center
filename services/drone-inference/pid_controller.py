@@ -1,11 +1,12 @@
 class PIDController:
     """PID Controller with Derivative-on-Measurement to prevent setpoint kicks."""
-    def __init__(self, Kp: float, Ki: float, Kd: float, setpoint: float = 0.0, integral_limit: float = 2.0):
+    def __init__(self, Kp: float, Ki: float, Kd: float, setpoint: float = 0.0, integral_limit: float = 1.2, integral_min: float = -0.35):
         self.Kp, self.Ki, self.Kd = Kp, Ki, Kd
         self.setpoint = setpoint
         self.integral = 0.0
         self.last_measurement = None
         self.integral_limit = integral_limit
+        self.integral_min = integral_min
         self.derivative = 0.0
         self.time_since_last_change = 0.0
 
@@ -19,7 +20,7 @@ class PIDController:
         error = self.setpoint - measurement
         if enable_integral:
             self.integral += error * dt
-            self.integral = max(0.0, min(self.integral_limit, self.integral))
+            self.integral = max(self.integral_min, min(self.integral_limit, self.integral))
         
         if self.last_measurement is not None:
             if measurement != self.last_measurement:
