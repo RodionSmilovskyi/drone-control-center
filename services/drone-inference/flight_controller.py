@@ -6,22 +6,22 @@ class FlightController:
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
         # Balanced hover baseline: trims downward on fresh pack (to ~1515-1535) and upward on sag (to ~1670)
-        self.throttle_pid = PIDController(Kp=7.5, Ki=1.0, Kd=2.8, integral_limit=1.2, integral_min=-0.35)
+        self.throttle_pid = PIDController(Kp=5.2, Ki=1.0, Kd=3.3, integral_limit=1.2, integral_min=-0.35)
         
         self.hover_throttle = 1550
         self.min_throttle = 1341
         self.max_throttle = 1800
-        # Asymmetrical authority: descent authority [-55] keeps floor at safe 1495 PWM (no motor drop),
+        # Asymmetrical authority: descent authority [-75] allows effective braking (floor 1475 PWM) without motor drop,
         # expanded climb headroom [+130] for battery sag (throttle up to 1680 PWM)
         self.max_climb_correction = 130.0
-        self.max_descent_correction = -55.0
+        self.max_descent_correction = -75.0
         self.max_pid_correction = self.max_climb_correction
         
         # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
         self.ground_threshold_norm = 0.020 / 3.0
         
-        # Slew rate: 0.60 m/s (~0.20 normalized units/sec) to smoothly lead climb without pursuit lag
-        self.max_climb_rate_norm = 0.60 / 3.0
+        # Slew rate: 0.35 m/s (~0.117 normalized units/sec) to smoothly lead climb without ceiling overshoot
+        self.max_climb_rate_norm = 0.35 / 3.0
         self.current_setpoint_norm = None
         
         self.reset()
