@@ -13,7 +13,7 @@ The architecture decouples hardware I/O, control/inference loops, and user inter
 1. **Strict Resource Budgeting (RPi Zero 2 W - 512MB RAM):**
    - Memory footprint is bounded and deterministic.
    - Sockets and queues avoid unbounded growth using `zmq.CONFLATE = 1`.
-   - Logging is centralized and rotation-ready via `drone_logging.py`.
+   - Logging is centralized and rotation-ready via `core/drone_logging.py`.
 2. **Zero-Copy / Low-Latency State Exchange:**
    - High-throughput sensor telemetry (observations, optical flow integrations) is passed strictly through POSIX Shared Memory segments (`core.shared_memory_manager.py`).
    - Prevents JSON serialization/deserialization CPU bottlenecks.
@@ -29,7 +29,8 @@ The architecture decouples hardware I/O, control/inference loops, and user inter
 ```
 drone-control-center/
 ├── core/
-│   └── shared_memory_manager.py     # POSIX Shared Memory wrapper with resource-tracker isolation
+│   ├── shared_memory_manager.py     # POSIX Shared Memory wrapper with resource-tracker isolation
+│   └── drone_logging.py             # Centralized logging setup with WatchedFileHandler
 ├── services/
 │   ├── drone-fc/                    # Flight Controller Service
 │   │   ├── drone-fc.service         # Systemd unit definition
@@ -51,19 +52,15 @@ drone-control-center/
 ├── docs/                            # Hardware & Betaflight configuration dumps
 ├── tests/                           # Unit and live verification tests
 │   ├── test_shared_memory_manager.py
-│   ├── test_policy_logic.py
-│   ├── test_policy_live.py
-│   ├── test_strategic_logic.py
+│   ├── test_inference_altitude.py
 │   └── test_dashboard_sensors.py
-├── scripts/                         # Legacy/standalone prototype scripts
-│   ├── fc_interface.py / fc_interface_mock.py # Legacy MQTT FC testing utilities
+├── scripts/                         # Standalone diagnostic, calibration & prototype scripts
+│   ├── calibrate_sensors.py         # Interactive CLI tool to calibrate optical flow scale factor
+│   ├── sensor_check.py              # Standalone hardware diagnostic script for VL53L1X (down & front) & PMW3901
 │   ├── simpleUI.py / rich_ui.py     # Legacy standalone telemetry/manual control consoles
 │   └── inference-example.py         # Standalone TFLite experiment script
 ├── logs/                            # Centralized runtime log directory (*.log)
-├── calibrate_sensors.py             # Interactive CLI tool to calibrate optical flow scale factor
-├── sensor_check.py                  # Standalone hardware diagnostic script for VL53L1X (down & front) & PMW3901
 ├── dashboard.py                     # Primary Rich TUI Dashboard for live status and control
-├── drone_logging.py                 # Common logging setup
 ├── requirements-pi.txt              # RPi production Python dependencies
 ├── requirements-wsl.txt             # Development / mock environment dependencies
 ├── GEMINI.md                        # Embedded flight constraints & rules
@@ -143,9 +140,9 @@ A terminal user interface implemented with **Rich**:
 
 ## 5. Calibration and Diagnostic Utilities
 
-- **`sensor_check.py`:** Independent hardware test for I2C and SPI sensors, ensuring addresses, XSHUT toggles, and SPI communication are functioning before launching background daemons.
-- **`calibrate_sensors.py`:** Interactive measurement helper to compute scale factors between optical flow pixel motion and physical distance in meters.
-- **`scripts/rich_ui.py` / `scripts/simpleUI.py`:** Legacy manual RC control utilities over serial MSP for standalone bench testing and telemetry reception.
+- **`scripts/sensor_check.py`:** Independent hardware test for I2C and SPI sensors, ensuring addresses, XSHUT toggles, and SPI communication are functioning before launching background daemons.
+- **`scripts/calibrate_sensors.py`:** Interactive measurement helper to compute scale factors between optical flow pixel motion and physical distance in meters.
+- **`scripts/rich_ui.py`:** Standalone manual RC control utility over serial MSP for bench testing and telemetry reception.
 
 ---
 

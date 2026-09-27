@@ -11,11 +11,9 @@ import math
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-from drone_logging import setup_logger
-try:
-    from strategic_agent import MAX_XY_SHIFT
-except ImportError:
-    MAX_XY_SHIFT = 1.0
+from core.drone_logging import setup_logger
+
+MAX_XY_SHIFT = 1.0
 
 # --- Configuration ---
 LOG_FILE = "sensor.log"

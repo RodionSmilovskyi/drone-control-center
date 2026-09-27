@@ -10,7 +10,7 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from core.shared_memory_manager import SharedMemoryManager
-from drone_logging import setup_logger
+from core.drone_logging import setup_logger
 
 DRONE_ENV = os.environ.get("DRONE_ENV", "PI")
 

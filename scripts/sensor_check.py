@@ -116,7 +116,8 @@ def initialize_sensors(log_f=None):
     return sensor_down, sensor_front, flow
 
 if __name__ == "__main__":
-    logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    logs_dir = os.path.join(project_root, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     log_path = os.path.join(logs_dir, LOG_FILE)
     log_f = open(log_path, "w")
