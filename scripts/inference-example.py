@@ -1,0 +1,22 @@
+import numpy as np
+import tflite_runtime.interpreter as tflite
+
+import os
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "master-model.tflite")
+
+interpreter = tflite.Interpreter(model_path=MODEL_PATH)
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+input_data = np.array([0, 1], dtype=np.float32)
+interpreter.set_tensor(input_details[0]['index'], input_data)
+interpreter.invoke()
+print(input_data)
+
+
+output_data = interpreter.get_tensor(output_details[0]['index'])
+print(output_data, len(output_data))
+print("ready")

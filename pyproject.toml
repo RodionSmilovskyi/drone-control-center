@@ -1,0 +1,25 @@
+[project]
+name = "drone-control-center"
+version = "0.1.0"
+description = "Drone control center"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "yamspy==0.3.3",
+    "numpy==1.23.5",
+    "tflite-runtime==2.14.0",
+    "rich==15.0.0",
+    "pyzmq==27.1.0",
+    "pyserial==3.5"
+]
+
+[project.optional-dependencies]
+pi = [
+    "pmw3901==1.0.0",
+    "adafruit-circuitpython-vl53l1x==1.2.7",
+    "Adafruit-Blinka==8.67.0",
+    "spidev==3.8",
+    "gpiod",
+    "gpiodevice"
+]
+
