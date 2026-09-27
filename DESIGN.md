@@ -59,6 +59,7 @@ drone-control-center/
 │   ├── sensor_check.py              # Standalone hardware diagnostic script for VL53L1X (down & front) & PMW3901
 │   ├── simpleUI.py / rich_ui.py     # Legacy standalone telemetry/manual control consoles
 │   └── inference-example.py         # Standalone TFLite experiment script
+├── models/                          # Neural network policies & TFLite models (*.tflite)
 ├── logs/                            # Centralized runtime log directory (*.log)
 ├── dashboard.py                     # Primary Rich TUI Dashboard for live status and control
 ├── requirements-pi.txt              # RPi production Python dependencies

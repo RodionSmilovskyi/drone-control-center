@@ -99,7 +99,10 @@ MAX_YAW = 360
 #
 SERIAL_PORT = "/dev/ttyACM0"
 
-interpreter = tflite.Interpreter(model_path="master-model.tflite")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "master-model.tflite")
+
+interpreter = tflite.Interpreter(model_path=MODEL_PATH)
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
