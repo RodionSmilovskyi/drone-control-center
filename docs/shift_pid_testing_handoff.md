@@ -83,9 +83,9 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.5` | `3.3` | `[-0.35, +1.20]` | `1565` | `[-75, +130]` | `[1490, 1695]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
-| **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.3` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
-| **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.3` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
+| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.5` | `3.3` | `[-0.35, +1.20]` | `1600` | `[-75, +130]` | `[1525, 1730]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
+| **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
+| **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -214,3 +214,17 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Inverted Pitch Axis Polarity in `sensor_real.py`:** Mapped longitudinal displacement to `-self.shift_x` and velocity to `-self.vel_x_norm` in `SensorReal.read()` so that physical forward motion registers as positive Y displacement. Now, forward drift (`+Y`) generates negative PID error, producing `Pitch < 1500` (nose backward) to arrest forward drift.
   - **Elevated Hover Baseline & Integral Gain:** Adjusted `hover_throttle` from `1550` to `1565` (closer to empirical `1585 PWM` hover equilibrium) and increased `Ki` from `1.0` to `1.5` so altitude converges briskly to the target vertical shift without steady-state droop.
 - **Validation Status:** Unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 3 — 10-Second AI Hover Flight Analysis & Fine-Tuning (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 176–459):**
+  1. **Pitch Polarity Inversion Confirmed Fixed:** When the drone drifted forward at $t=2.5\text{s}$ (`Sy = +0.192m`), `pitch_pid` commanded `Pitch = 1486 PWM` (< 1500, nose backward), successfully arresting forward translation. The drone reversed away from the wall, damped the backward swing, and from $t=6.0\text{s}$ to $t=9.5\text{s}$ held steady near origin (`Sy = -0.04m` to `+0.04m`, active Pitch commands within `1496–1504 PWM`).
+  2. **Roll Control Stable:** Roll stayed tightly bounded (`Sx` between `-0.064m` and `+0.12m`), with corrective `Roll` commands smoothly returning the airframe to origin.
+  3. **Hover Throttle Gap to Empirical Equilibrium:** As the flight progressed from $t=5.0\text{s}$ to $t=9.5\text{s}$, the actual throttle required to maintain hover on the physical airframe was observed at `1635–1652 PWM`. With `hover_throttle = 1565`, the integral term had to climb from `0.0` to `+0.448` (`+67.1 PWM`) to support hover, keeping altitude around `0.28m–0.32m` (below the `0.41m` setpoint) while the integral accumulated.
+- **Adjustments Made:**
+  - **Raised Baseline Hover Throttle:** Adjusted `hover_throttle` from `1565` to `1600 PWM` to bridge the gap to empirical equilibrium (`1635–1650 PWM`). Now integral only needs to trim $\pm 35\text{ PWM}$, enabling the drone to reach the `0.40m` setpoint briskly without steady-state offset.
+  - **Increased Roll and Pitch Damping (`Kd`):** Increased `Kd` from `0.3` to `0.4` on both `roll_pid` and `pitch_pid` to damp horizontal translation velocity more aggressively and reduce the initial position overshoot swing from $\pm 20\text{cm}$ down to $< 10\text{cm}$.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for on-device flight validation.
