@@ -21,12 +21,21 @@ from core.shared_memory_manager import SharedMemoryManager
 # Global state
 shutting_down = False
 current_mode = "disarmed"
-target_altitude = 0.4
+MAX_ALTITUDE = 3.0
+SHIFT_Z_STEP = round(0.05 / MAX_ALTITUDE, 3)  # ~0.017 (+5cm per step)
+desired_shift_z = round(0.4 / MAX_ALTITUDE, 3)  # +0.133 (+0.40m default vertical shift)
+desired_shift_x = 0.0
+desired_shift_y = 0.0
 mode_lock = threading.Lock()
 
 def publish_mode_cmd(pub_socket):
-    """Sends current flight mode and target altitude via non-blocking ZMQ."""
-    payload = json.dumps({"mode": current_mode, "target_alt": round(target_altitude, 2)})
+    """Sends current flight mode and desired 3D shifts via non-blocking ZMQ."""
+    payload = json.dumps({
+        "mode": current_mode,
+        "shift_z": round(desired_shift_z, 3),
+        "shift_x": round(desired_shift_x, 3),
+        "shift_y": round(desired_shift_y, 3),
+    })
     pub_socket.send_string(payload)
 
 def signal_handler(sig, frame):
@@ -89,8 +98,14 @@ def get_rc_table(rc_commands: list) -> Table:
     
     return table
 
-def get_mode_panel(mode: str, rc_commands: list, target_alt: float) -> Panel:
-    """Creates a panel displaying the current operating mode, target altitude, and RC summary."""
+def get_mode_panel(
+    mode: str,
+    rc_commands: list,
+    shift_z: float,
+    shift_x: float = 0.0,
+    shift_y: float = 0.0,
+) -> Panel:
+    """Creates a panel displaying the current operating mode, desired 3D shifts, and RC summary."""
     mode_colors = {
         "disarmed": "bold red",
         "armed": "bold green",
@@ -99,14 +114,24 @@ def get_mode_panel(mode: str, rc_commands: list, target_alt: float) -> Panel:
     color = mode_colors.get(mode, "bold white")
     
     mode_text = Text(f"{mode.upper()}", style=f"{color} underline")
-    target_text = Text(f"\nTarget Alt: {target_alt:.2f}m", style="bold cyan")
+    shift_z_text = Text(f"\nShift Z: {shift_z:+.3f} ({shift_z * MAX_ALTITUDE:+.2f}m)", style="bold cyan")
+    shift_xy_text = Text(f"\nShift X/Y: {shift_x:+.2f}, {shift_y:+.2f}", style="cyan")
     rc_summary = Text(f"\nRC: {rc_commands[:4]}", style="dim")
     
-    content = Text.assemble("\n", mode_text, "\n", target_text, "\n", rc_summary)
+    content = Text.assemble("\n", mode_text, "\n", shift_z_text, shift_xy_text, "\n", rc_summary)
     
     return Panel(content, title="[bold]System Status[/bold]", border_style=color.split()[-1], title_align="center")
 
-def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: str, rc_commands: list, target_alt: float = 0.4, is_exiting: bool = False) -> Panel:
+def generate_dashboard(
+    sensor_data: np.ndarray,
+    heartbeats: np.ndarray,
+    mode: str,
+    rc_commands: list,
+    shift_z: float = 0.133,
+    shift_x: float = 0.0,
+    shift_y: float = 0.0,
+    is_exiting: bool = False,
+) -> Panel:
     """Generates the full dashboard panel."""
     if is_exiting:
         return Panel(
@@ -119,7 +144,7 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: st
     status_table = get_status_table(heartbeats)
     sensor_table = get_sensor_table(sensor_data)
     rc_table = get_rc_table(rc_commands)
-    mode_panel = get_mode_panel(mode, rc_commands, target_alt)
+    mode_panel = get_mode_panel(mode, rc_commands, shift_z, shift_x, shift_y)
     
     system_ok = (heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0) and \
                 (heartbeats[1] > 0 and (time.time() - heartbeats[1]) < 1.0) and \
@@ -150,7 +175,7 @@ def generate_dashboard(sensor_data: np.ndarray, heartbeats: np.ndarray, mode: st
 
 def keyboard_listener(pub_socket):
     """Background thread to handle keyboard input."""
-    global current_mode, target_altitude, shutting_down
+    global current_mode, desired_shift_z, desired_shift_x, desired_shift_y, shutting_down
     while not shutting_down:
         try:
             # sys.stdin.read(1) will block in this thread, which is fine
@@ -168,11 +193,11 @@ def keyboard_listener(pub_socket):
                 new_mode = "ai"
             elif char_lower == 'w':
                 with mode_lock:
-                    target_altitude = min(2.5, round(target_altitude + 0.05, 2))
+                    desired_shift_z = min(1.0, round(desired_shift_z + SHIFT_Z_STEP, 3))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 's':
                 with mode_lock:
-                    target_altitude = max(0.1, round(target_altitude - 0.05, 2))
+                    desired_shift_z = max(-1.0, round(desired_shift_z - SHIFT_Z_STEP, 3))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'q':
                 shutting_down = True
@@ -250,7 +275,7 @@ def main():
         kb_thread = threading.Thread(target=keyboard_listener, args=(pub_socket,), daemon=True)
         kb_thread.start()
         
-        with Live(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, target_altitude), console=console, screen=True, refresh_per_second=10) as live:
+        with Live(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, desired_shift_z, desired_shift_x, desired_shift_y), console=console, screen=True, refresh_per_second=10) as live:
             shm_mgr = None
             hb_shm_mgr = None
             try:
@@ -302,12 +327,12 @@ def main():
                             hb_shm_mgr = None
                     
                     with mode_lock:
-                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, target_altitude))
+                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, desired_shift_z, desired_shift_x, desired_shift_y))
                     time.sleep(0.1)
                 
                 # Show shutdown message
                 with mode_lock:
-                    live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, target_altitude, is_exiting=True))
+                    live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, desired_shift_z, desired_shift_x, desired_shift_y, is_exiting=True))
                 time.sleep(0.8)
             finally:
                 if shm_mgr:

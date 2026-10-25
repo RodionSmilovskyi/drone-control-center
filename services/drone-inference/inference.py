@@ -17,7 +17,10 @@ from flight_controller import FlightController
 # Global flag for shutdown
 shutting_down = False
 MAX_ALTITUDE = 3.0  # Max altitude in meters, aligned with sensor_real.py
-DEFAULT_TARGET_ALT = 0.4
+MAX_XY_SHIFT = 1.0  # Max horizontal shift in meters, aligned with sensor_real.py
+DEFAULT_SHIFT_Z = round(0.4 / MAX_ALTITUDE, 4)
+DEFAULT_SHIFT_X = 0.0
+DEFAULT_SHIFT_Y = 0.0
 
 def signal_handler(sig, frame):
     global shutting_down
@@ -39,26 +42,36 @@ def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     fc.reset()
     return [1500, 1500, 900, 1500, 1800, 1800]
 
-def handle_ai(obs: np.ndarray, fc: FlightController, dt: float, target_alt: float = DEFAULT_TARGET_ALT) -> list:
+def handle_ai(
+    obs: np.ndarray,
+    fc: FlightController,
+    dt: float,
+    desired_shift_z: float = DEFAULT_SHIFT_Z,
+    desired_shift_x: float = DEFAULT_SHIFT_X,
+    desired_shift_y: float = DEFAULT_SHIFT_Y,
+) -> list:
     """
-    Mode: AI. Returns RC commands from FlightController with dynamic target altitude.
-    Maps target altitude (0..MAX_ALTITUDE) to NN action [-1, 1], and current altitude to [0, 1].
+    Mode: AI. Returns RC commands from FlightController with dynamic 3D shift targets in [-1, 1].
+    desired_shift_z is a fraction of MAX_ALTITUDE in [-1, 1].
+    desired_shift_x and desired_shift_y are fractions of MAX_XY_SHIFT in [-1, 1].
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
-    # 1. Normalize target altitude to [0, 1]
-    target_alt_norm = float(np.clip(target_alt / MAX_ALTITUDE, 0.0, 1.0))
+    # 1. Clamp desired shifts to [-1, 1]
+    shift_z = float(np.clip(desired_shift_z, -1.0, 1.0))
+    shift_x = float(np.clip(desired_shift_x, -1.0, 1.0))
+    shift_y = float(np.clip(desired_shift_y, -1.0, 1.0))
     
-    # 2. Map normalized altitude [0, 1] to NN action in [-1, 1]
-    action_alt = (target_alt_norm * 2.0) - 1.0
+    # High-level action: [desired_shift_z, desired_shift_x, desired_shift_y, desired_yaw]
+    high_level_action = np.array([shift_z, shift_x, shift_y, 0.0], dtype=np.float32)
     
-    # High-level action: [desired_alt, roll, pitch, yaw_rate]
-    high_level_action = np.array([action_alt, 0.0, 0.0, 0.0], dtype=np.float32)
-    
-    # 3. Normalize current sensor altitude obs[0] to [0, 1]
+    # 2. Normalize current sensor altitude obs[0] to [0, 1] and horizontal shifts obs[2], obs[3] to [-1, 1]
     current_alt_norm = float(np.clip(obs[0] / MAX_ALTITUDE, 0.0, 1.0))
+    current_shift_x_norm = float(np.clip(obs[2] / MAX_XY_SHIFT, -1.0, 1.0))
+    current_shift_y_norm = float(np.clip(obs[3] / MAX_XY_SHIFT, -1.0, 1.0))
+    current_state = np.array([current_alt_norm, current_shift_x_norm, current_shift_y_norm, 0.0], dtype=np.float32)
     
-    # Compute low-level RC commands (4 channels: throttle, roll, pitch, yaw)
-    low_level_rc = fc.compute_rc_commands(high_level_action, current_alt_norm, dt=dt)
+    # 3. Compute low-level RC commands (4 channels: throttle, roll, pitch, yaw)
+    low_level_rc = fc.compute_rc_commands(high_level_action, current_state, dt=dt)
     
     # reorder to [roll, pitch, throttle, yaw, aux1, aux2]
     rc_throttle, rc_roll, rc_pitch, rc_yaw = low_level_rc.tolist()
@@ -106,7 +119,9 @@ def main():
     hb_shm_mgr = None
 
     current_mode = "disarmed"
-    target_alt = DEFAULT_TARGET_ALT
+    desired_shift_z = DEFAULT_SHIFT_Z
+    desired_shift_x = DEFAULT_SHIFT_X
+    desired_shift_y = DEFAULT_SHIFT_Y
     
     # Wait for Sensors and FC services to be online before starting
     logger.info("Waiting for Sensors and FC services to be online...")
@@ -150,7 +165,7 @@ def main():
                     hb_shm_mgr.close()
                     hb_shm_mgr = None
 
-            # 1. Non-blocking read mode and target altitude
+            # 1. Non-blocking read mode and desired 3D shifts
             try:
                 msg = mode_sub.recv_string(flags=zmq.NOBLOCK)
                 if msg:
@@ -162,11 +177,26 @@ def main():
                                 if new_mode != current_mode:
                                     current_mode = new_mode
                                     logger.info(f"Mode changed to: {current_mode}")
-                            if "target_alt" in payload:
-                                new_alt = float(payload["target_alt"])
-                                if new_alt != target_alt:
-                                    target_alt = new_alt
-                                    logger.info(f"Target altitude changed to: {target_alt:.2f}m")
+                            if "shift_z" in payload:
+                                new_sz = float(np.clip(float(payload["shift_z"]), -1.0, 1.0))
+                                if new_sz != desired_shift_z:
+                                    desired_shift_z = new_sz
+                                    logger.info(f"Desired shift_z changed to: {desired_shift_z:+.3f} ({desired_shift_z * MAX_ALTITUDE:+.2f}m)")
+                            elif "target_alt" in payload:
+                                new_sz = float(np.clip(float(payload["target_alt"]) / MAX_ALTITUDE, -1.0, 1.0))
+                                if new_sz != desired_shift_z:
+                                    desired_shift_z = new_sz
+                                    logger.info(f"Desired shift_z (from target_alt) changed to: {desired_shift_z:+.3f}")
+                            if "shift_x" in payload:
+                                new_sx = float(np.clip(float(payload["shift_x"]), -1.0, 1.0))
+                                if new_sx != desired_shift_x:
+                                    desired_shift_x = new_sx
+                                    logger.info(f"Desired shift_x changed to: {desired_shift_x:+.3f}")
+                            if "shift_y" in payload:
+                                new_sy = float(np.clip(float(payload["shift_y"]), -1.0, 1.0))
+                                if new_sy != desired_shift_y:
+                                    desired_shift_y = new_sy
+                                    logger.info(f"Desired shift_y changed to: {desired_shift_y:+.3f}")
                         except Exception as je:
                             logger.warning(f"Failed to parse JSON mode msg '{msg}': {je}")
                     else:
@@ -208,7 +238,7 @@ def main():
                 if current_mode == "armed":
                     rc_commands = handle_armed(obs, fc)
                 elif current_mode == "ai":
-                    rc_commands = handle_ai(obs, fc, dt, target_alt)
+                    rc_commands = handle_ai(obs, fc, dt, desired_shift_z, desired_shift_x, desired_shift_y)
                 else:
                     rc_commands = handle_disarmed(obs, fc)
 

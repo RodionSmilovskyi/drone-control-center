@@ -49,7 +49,9 @@ drone-control-center/
 │       └── sensor_mock.py           # Synthetic sensor data generator for WSL
 ├── custom_pcbs/                     # Hardware PCB schematics & gerbers
 ├── printed_parts/                   # 3D printable chassis & sensor mounts (.stl, .step)
-├── docs/                            # Hardware & Betaflight configuration dumps
+├── docs/                            # Hardware, Betaflight dumps & testing handoff guides
+│   ├── architecture_diagram.md
+│   └── shift_pid_testing_handoff.md # 3D shift & 4-axis PID testing guide & mandatory agent tuning log
 ├── tests/                           # Unit and live verification tests
 │   ├── test_shared_memory_manager.py
 │   ├── test_inference_altitude.py
@@ -106,11 +108,16 @@ drone-control-center/
 - **Execution Rate:** 100 Hz.
 - **Inputs:**
   - `drone_sensor_data` (Shared Memory)
-  - Control mode and dynamic target altitude updates from ZMQ subscriber `tcp://127.0.0.1:5555` (JSON payload `{"mode": "...", "target_alt": float}` with fallback to plain mode string).
+  - Control mode and dynamic 3D shift setpoints from ZMQ subscriber `tcp://127.0.0.1:5555` (JSON payload `{"mode": "...", "shift_z": float, "shift_x": float, "shift_y": float}` with fallback to `"target_alt"` or plain mode string).
 - **Operating Modes:**
-  - `disarmed`: Sends safe disarm commands `[1500, 1500, 900, 1500, 1000, 1000]`.
-  - `armed`: Sends armed idle commands `[1500, 1500, 900, 1500, 1800, 1800]`.
-  - `ai`: Computes PID-controlled throttle to maintain dynamic altitude setpoint (default `0.4m`, bounded `[0.1, 2.5m]`, paired with Betaflight `vbat_sag_compensation = 100` and hover throttle baseline = `1550`, bounded `[1341, 1800]`) alongside roll/pitch/yaw commands. Altitude is normalized via $z_{\text{norm}} = z / \text{MAX\_ALTITUDE}$ (`MAX_ALTITUDE = 3.0m`), mapped to high-level action range $[-1, 1]$ via $a_{\text{alt}} = 2 \cdot z_{\text{norm}} - 1$. The PID controller incorporates derivative-on-measurement with persistent velocity tracking across duplicate sensor frames, clamped frame $\Delta t \in [1, 50]\text{ms}$ with smooth setpoint slew/ramping ($0.35\text{ m/s}$) to smoothly lead climbs without ceiling catapults, ground unweight threshold anti-windup (freezing integral below 0.020m), asymmetrical PID correction authority (effective throttle range $[1475, 1680]\text{ PWM}$ via descent floor $-75\text{ PWM}$ and climb ceiling $+130\text{ PWM}$) providing effective braking against overshoots without motor cuts, and an adaptive bidirectional integral term ($K_i = 1.0$, clamped to $[-0.35, 1.2]$ allowing $-35\text{ PWM}$ downward trim on fresh batteries and $+120\text{ PWM}$ upward trim on battery sag) paired with $K_p = 5.2$ and $K_d = 3.3$ for rock-solid stability. Sensor altitude filtering utilizes $\alpha = 0.6$ for low-latency feedback.
+  - `disarmed`: Sends safe disarm commands `[1500, 1500, 900, 1500, 1000, 1000]` and resets all PID and reference states.
+  - `armed`: Sends armed idle commands `[1500, 1500, 900, 1500, 1800, 1800]` and resets all PID and reference states.
+  - `ai`: Accepts normalized 3D spatial shifts `desired_shift_z`, `desired_shift_x`, and `desired_shift_y` in `[-1.0, 1.0]` and computes 4-axis PID-controlled RC commands (`[roll, pitch, throttle, yaw, 1800, 1800]`):
+    - **Reference State Latching:** On the first frame when `ai` mode engages, `FlightController` latches the starting normalized altitude (`ref_alt_norm = obs[0] / MAX_ALTITUDE`, `MAX_ALTITUDE = 3.0m`) and starting horizontal shifts (`ref_shift_x_norm`, `ref_shift_y_norm` with `MAX_XY_SHIFT = 1.0m`). Target normalized altitude is $\text{desired\_alt\_norm} = \text{clip}(\text{ref\_alt\_norm} + \text{desired\_shift\_z}, 0.0, 1.0)$ (default `desired_shift_z = +0.1333`, i.e., `+0.40m`), allowing both positive climbs and negative descents relative to the starting altitude.
+    - **Throttle PID (`throttle_pid`):** Derivative-on-measurement (`Kp = 5.2, Ki = 1.0, Kd = 3.3`, bidirectional integral clamped to `[-0.35, 1.2]`), paired with Betaflight `vbat_sag_compensation = 100` and hover throttle baseline = `1550` (bounded `[1341, 1800]`), smooth setpoint slew/ramping ($0.35\text{ m/s}$), ground unweight threshold anti-windup ($0.020\text{m}$), and asymmetrical PID correction authority (`[-75, +130]` PWM -> `[1475, 1680]` PWM).
+    - **Roll (`shift_x`) & Pitch (`shift_y`) PIDs (`roll_pid`, `pitch_pid`):** Derivative-on-measurement with gentle indoor gains (`Kp = 0.5, Ki = 0.05, Kd = 0.3, integral_limit = ±0.2`). Parameterized explicitly against the SpeedyBee FC's `50°` max angle limit (`500 PWM` = `50°`, `10 PWM ≈ 1°`) with a safe indoor tilt cap of `max_indoor_tilt_deg = 5.0°` (`±50 PWM`, clamping Roll/Pitch to `[1450, 1550]`). Held strictly neutral (`1500 PWM`) below the `0.020m` ground threshold for level liftoff.
+    - **Yaw PID (`yaw_pid`):** Derivative-on-measurement (`Kp = 0.5, Ki = 0.0, Kd = 0.1`), maintaining neutral `1500 PWM` when yaw error is `0.0`.
+    - **Testing & Tuning Log:** Detailed testing steps and a mandatory agent tuning log are maintained in [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md). Any agent adjusting PID gains, limits, or shift logic must record its changes in that handoff document.
 - **Output:** Publishes RC packet `[roll, pitch, throttle, yaw, aux1, aux2]` over ZMQ PUB `tcp://127.0.0.1:5556`.
 
 #### C. `drone-fc` (`services/drone-fc/`)
@@ -128,14 +135,14 @@ A terminal user interface implemented with **Rich**:
   - `a`: Switch to `armed`
   - `d`: Switch to `disarmed`
   - `x`: Switch to `ai` (autonomous hover/flight)
-  - `w`: Increment target altitude by `+0.05m` (clamped to max `2.5m`)
-  - `s`: Decrement target altitude by `-0.05m` (clamped to min `0.1m`)
+  - `w`: Increment `desired_shift_z` by `+0.017` (`+0.05m / 3.0m`, clamped to `1.0`)
+  - `s`: Decrement `desired_shift_z` by `-0.017` (`-0.05m / 3.0m`, clamped to `-1.0`)
   - `q`: Graceful shutdown
 - **Live Panels:**
   - **Statuses:** Real-time health monitoring of all 3 microservices based on shared memory heartbeat threshold (< 1.0s = OK).
   - **Live Sensor Data:** Altitude, X/Y drift, normalized velocity, and heartbeat latency.
   - **RC Commands:** Active pulse-width values dispatched to the flight controller.
-  - **System Status:** Prominently displays current flight mode (`DISARMED`, `ARMED`, `AI`), active target altitude (`Target Alt: X.XXm`), and RC pulse summary.
+  - **System Status:** Prominently displays current flight mode (`DISARMED`, `ARMED`, `AI`), active vertical shift (`Shift Z: +X.XXX (+X.XXm)`), horizontal shift targets (`Shift X/Y: +0.00, +0.00`), and RC pulse summary.
 
 ---
 
@@ -157,3 +164,16 @@ Each service is designed to run independently under `systemd` on Raspberry Pi OS
 Environment variables:
 - `DRONE_ENV=PI` (Default on hardware)
 - `DRONE_ENV=WSL` (Mock sensors and FC for software-in-the-loop development)
+
+---
+
+## 7. Simulation Synchronization (`rl-ai` Project)
+
+The PyBullet simulation environment in `rl-ai` is calibrated to mirror physical hardware dynamics:
+- **Controllers:** Exact port of `FlightController` and `PIDController` (derivative-on-measurement, low-pass filter, 1550 PWM baseline, `[-75, +130]` asymmetric PID limits, $0.35\text{ m/s}$ slew ramping, ground unweight anti-windup at $0.020\text{m}$).
+- **Physical Specifications:** 475g all-up mass, LANNRC 1505 PLUS 3750KV motors, 3-inch propellers, 4S LiPo.
+- **Thrust Calibration:** Calibrated `MAX_THROTTLE = 2.11807 N` per motor ($W / (4 \times 0.550)$) so that 1550 PWM RC command produces steady hover equilibrium (TWR $\approx 1.82$).
+- **Observation Space (7D):** Aligned with the dual-ToF and optical flow array `[alt, front_dist, shift_x, shift_y, vel_x, vel_y, goal_alt]`.
+- **Sensor Modeling:** Low-pass filtering ($\alpha = 0.6$ on altitude, $\alpha = 0.3$ on front distance), PMW3901 optical flow ground cutoff below $0.04\text{m}$, and $0.05$ deadband.
+- **Episode Duration:** 120 seconds (2 minutes battery endurance) = 1,440 HRL sub-episodes (28,800 physics steps @ 240 Hz).
+
