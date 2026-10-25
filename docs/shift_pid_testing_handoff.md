@@ -83,7 +83,7 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.5` | `3.3` | `[-0.35, +1.20]` | `1600` | `[-75, +130]` | `[1525, 1730]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
+| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.5` | `3.3` | `[-0.35, +1.20]` | `1550` | `[-75, +130]` | `[1475, 1680]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
 | **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
@@ -228,3 +228,18 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Raised Baseline Hover Throttle:** Adjusted `hover_throttle` from `1565` to `1600 PWM` to bridge the gap to empirical equilibrium (`1635–1650 PWM`). Now integral only needs to trim $\pm 35\text{ PWM}$, enabling the drone to reach the `0.40m` setpoint briskly without steady-state offset.
   - **Increased Roll and Pitch Damping (`Kd`):** Increased `Kd` from `0.3` to `0.4` on both `roll_pid` and `pitch_pid` to damp horizontal translation velocity more aggressively and reduce the initial position overshoot swing from $\pm 20\text{cm}$ down to $< 10\text{cm}$.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for on-device flight validation.
+
+### Entry 4 — Reverting Hover Throttle Baseline & Ground Shift Isolation (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 246–552):**
+  1. **Ground Throttle Build-up & Liftoff Pop:** With `hover_throttle = 1600 PWM`, while sitting on the ground awaiting liftoff, setpoint slewing drove P-term to `+69 PWM`, causing ground throttle to reach `1669 PWM`. When the drone finally unweighted at $t=6.1\text{s}$, it popped up abruptly to `0.525m`. Per user instruction, baseline hover throttle must not be elevated above `1550 PWM`.
+  2. **Pre-Takeoff Stale Shift Latching:** Before entering AI mode, stale shift (`Sy = -0.806m`) was present in shared memory. On frame 0, `FlightController` latched `ref_shift_y_norm = -0.806`. When optical flow zeroed on the ground, error became `-0.806`, pinning `pitch_pid` to the `1450 PWM` backward tilt limit.
+- **Adjustments Made:**
+  - **Reverted Hover Throttle Baseline:** Set `hover_throttle` strictly back to `1550 PWM` (effective range `[1475, 1680]`), preserving smooth ground unweighting without catapulting.
+  - **Ground Shift Isolation in `FlightController`:** Whenever `not is_airborne` (on ground below `0.020m`), `ref_shift_x_norm` and `ref_shift_y_norm` are held strictly at `0.0`, preventing any pre-takeoff stale coordinates from corrupting reference setpoints.
+  - **Unconditional Ground Reset in `SensorReal`:** In `SensorReal._poll_loop`, whenever `new_alt < 0.04m`, `shift_x`, `shift_y`, and velocity states are unconditionally reset to `0.0` within the lock.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.

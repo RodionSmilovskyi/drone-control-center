@@ -209,6 +209,11 @@ class SensorReal:
             with self.lock:
                 self.altitude = new_alt
                 self.front_dist = new_front
+                if new_alt < 0.04:
+                    self.shift_x = 0.0
+                    self.shift_y = 0.0
+                    self.vel_x_norm = 0.0
+                    self.vel_y_norm = 0.0
 
             time.sleep(0.01)
 

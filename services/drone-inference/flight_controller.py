@@ -5,13 +5,13 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # Hover baseline 1600 PWM tuned against empirical on-device hover (1635-1650 PWM in logs/inference.log)
+        # Hover baseline 1550 PWM prevents catapult takeoff and ground unweight spikes
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.5, Kd=3.3, integral_limit=1.2, integral_min=-0.35)
         self.roll_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.4, integral_limit=0.2, integral_min=-0.2)
         self.pitch_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.4, integral_limit=0.2, integral_min=-0.2)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
-        self.hover_throttle = 1600
+        self.hover_throttle = 1550
         self.min_throttle = 1341
         self.max_throttle = 1800
         # Asymmetrical authority: descent authority [-75] allows effective braking (floor 1475 PWM) without motor drop,
@@ -67,13 +67,20 @@ class FlightController:
         desired_shift_y = float(np.clip(high_level_action[2], -1.0, 1.0))
         desired_yaw_norm = float(np.clip(high_level_action[3], -1.0, 1.0))
 
+        is_airborne = current_alt_norm >= self.ground_threshold_norm
+
         # Latch reference state when AI mode engages (first frame after reset)
         if self.ref_alt_norm is None:
             self.ref_alt_norm = current_alt_norm
         if self.ref_shift_x_norm is None:
-            self.ref_shift_x_norm = current_shift_x_norm
+            self.ref_shift_x_norm = current_shift_x_norm if is_airborne else 0.0
         if self.ref_shift_y_norm is None:
-            self.ref_shift_y_norm = current_shift_y_norm
+            self.ref_shift_y_norm = current_shift_y_norm if is_airborne else 0.0
+
+        # On the ground before takeoff, horizontal origin is always zero
+        if not is_airborne:
+            self.ref_shift_x_norm = 0.0
+            self.ref_shift_y_norm = 0.0
 
         desired_alt_norm = float(np.clip(self.ref_alt_norm + desired_shift_z, 0.0, 1.0))
         desired_x_norm = float(np.clip(self.ref_shift_x_norm + desired_shift_x, -1.0, 1.0))
