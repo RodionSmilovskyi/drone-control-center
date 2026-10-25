@@ -219,4 +219,6 @@ class SensorReal:
 
     def read(self):
         with self.lock:
-            return [self.altitude, self.front_dist, self.shift_y, self.shift_x, self.vel_y_norm, self.vel_x_norm]
+            # Longitudinal axis (Y) is inverted on PMW3901 hardware mount; negate shift_x and vel_x
+            # so that forward drone movement produces positive Y displacement and velocity.
+            return [self.altitude, self.front_dist, self.shift_y, -self.shift_x, self.vel_y_norm, -self.vel_x_norm]

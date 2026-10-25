@@ -5,13 +5,13 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # Balanced hover baseline: trims downward on fresh pack (to ~1515-1535) and upward on sag (to ~1670)
-        self.throttle_pid = PIDController(Kp=5.2, Ki=1.0, Kd=3.3, integral_limit=1.2, integral_min=-0.35)
+        # Hover baseline 1565 PWM tuned against empirical on-device hover (~1585 PWM in logs/inference.log)
+        self.throttle_pid = PIDController(Kp=5.2, Ki=1.5, Kd=3.3, integral_limit=1.2, integral_min=-0.35)
         self.roll_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.3, integral_limit=0.2, integral_min=-0.2)
         self.pitch_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.3, integral_limit=0.2, integral_min=-0.2)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
-        self.hover_throttle = 1550
+        self.hover_throttle = 1565
         self.min_throttle = 1341
         self.max_throttle = 1800
         # Asymmetrical authority: descent authority [-75] allows effective braking (floor 1475 PWM) without motor drop,

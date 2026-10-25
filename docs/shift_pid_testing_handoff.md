@@ -83,7 +83,7 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.0` | `3.3` | `[-0.35, +1.20]` | `1550` | `[-75, +130]` | `[1475, 1680]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
+| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.5` | `3.3` | `[-0.35, +1.20]` | `1565` | `[-75, +130]` | `[1490, 1695]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
 | **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.3` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.3` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
@@ -199,3 +199,18 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - Added reference state latching (`ref_alt_norm`, `ref_shift_x_norm`, `ref_shift_y_norm`) on first AI frame after `reset()`.
   - Parameterized Roll/Pitch authority in degrees (`fc_max_angle_deg = 50.0`, `max_indoor_tilt_deg = 5.0` $\rightarrow \pm 50\text{ PWM}$ `[1450, 1550]`) with a level-liftoff guard below `0.020m`.
 - **Validation Status:** Local unit tests (`tests/test_inference_altitude.py`) passed (`9/9 OK`). Pending physical Raspberry Pi Zero 2 W Phase 2 (polarity check) and Phase 3 (indoor vertical shift hover test).
+
+### Entry 2 — Telemetry Flight Log Analysis & Fine Tuning (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 370–476):**
+  1. **Pitch (Y) Axis Positive Feedback:** As the drone took off, the forward ToF distance decreased from `0.324m` down to `0.092m` (drone physically moved forward), while `obs[3]` became negative (`-0.208m`). Because `pitch_pid` computed positive error from negative Y, it commanded `Pitch > 1500` (up to `1518 PWM`), pitching the nose down/forward and reinforcing the forward movement (positive feedback) until manual disarm.
+  2. **Roll (X) Axis Negative Feedback:** Lateral drift reached `+0.059m` (+5.9cm), and `roll_pid` commanded `Roll = 1495 PWM` (< 1500, rolling left), successfully arresting the drift and returning X displacement to `-0.005m` (-5mm) with zero oscillation.
+  3. **Vertical Hover Equilibrium:** Drone achieved clean liftoff at `1579 PWM` and hovered steadily between `0.298m` and `0.316m` with throttle at `~1585 PWM`. However, with baseline `hover_throttle = 1550` and `Ki = 1.0`, integrating the steady-state difference from `0.30m` to the `0.41m` setpoint was too sluggish during the short 3.5s flight window.
+- **Adjustments Made:**
+  - **Inverted Pitch Axis Polarity in `sensor_real.py`:** Mapped longitudinal displacement to `-self.shift_x` and velocity to `-self.vel_x_norm` in `SensorReal.read()` so that physical forward motion registers as positive Y displacement. Now, forward drift (`+Y`) generates negative PID error, producing `Pitch < 1500` (nose backward) to arrest forward drift.
+  - **Elevated Hover Baseline & Integral Gain:** Adjusted `hover_throttle` from `1550` to `1565` (closer to empirical `1585 PWM` hover equilibrium) and increased `Ki` from `1.0` to `1.5` so altitude converges briskly to the target vertical shift without steady-state droop.
+- **Validation Status:** Unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
