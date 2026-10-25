@@ -83,7 +83,7 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `4.5` | `1.2` | `2.0` | `[-0.35, +1.20]` | `1480` | `[-135, +140]` | `[1345, 1620]` | Slew 0.35 m/s; 8cm ground leash; anti-windup < 0.020m |
+| **Throttle (Z)** | `self.throttle_pid` | `4.8` | `1.2` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +140]` | `[1385, 1675]` | Slew 0.35 m/s; unweights at ~1570 PWM; anti-windup < 0.020m |
 | **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
@@ -244,6 +244,19 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Unconditional Ground Reset in `SensorReal`:** In `SensorReal._poll_loop`, whenever `new_alt < 0.04m`, `shift_x`, `shift_y`, and velocity states are unconditionally reset to `0.0` within the lock.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
 
+### Entry 6 — Liftoff Thrust Calibration & Ground Stall Resolution (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 106–230):**
+  1. **Ground Stall at 1492 PWM:** With `hover_throttle = 1480 PWM` and the 8cm ground leash, throttle on the ground was capped at `1492 PWM`. Because empirical liftoff thrust on this quad requires `~1570 PWM`, the quad was 80 PWM below unweighting thrust and sat on the ground without lifting off.
+- **Adjustments Made:**
+  - **Calibrated Baseline to 1535 PWM:** Raised `hover_throttle` to `1535 PWM`. As the setpoint slews upward at $0.35\text{ m/s}$, throttle smoothly ramps from `1535 PWM` to the exact `~1570 PWM` liftoff threshold in just $0.6\text{s}$, producing a timely, gentle liftoff without catapulting.
+  - **Removed Ground Leash:** Removed the artificial 8cm ground leash so the standard slew rate guides the liftoff ramp naturally.
+  - **Preserved Expanded Descent Authority & Soft D-Term:** Kept `max_descent_correction = -150.0 PWM` (floor: `1385 PWM`) so that when the quad reaches or exceeds target altitude ($0.40\text{m}$), it can actively cut throttle to descend cleanly away from the cage ceiling, and kept $K_d = 2.2$ to avoid descent kicks.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
 ### Entry 5 — Fresh Battery Cage Overshoot Analysis & Throttle Authority Fix (2026-10-25)
 - **Files Modified:**
   - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
@@ -259,4 +272,17 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Softened D-Term Kick:** Reduced `Kd` from `3.3` to `2.0` on `throttle_pid`, preventing violent $+150\text{ PWM}$ spikes on rapid descents.
   - **Tuned Proportional & Integral Gains:** Set `Kp = 4.5` and `Ki = 1.2` on `throttle_pid`.
   - **Added Ground Error Leash:** While on the ground (`not is_airborne`), `current_setpoint_norm` is capped to at most `8cm` ($0.0267$ norm) above `current_alt_norm`. Ground P-term is strictly capped to $\le +12\text{ PWM}$ (`ground throttle` $\le 1492\text{ PWM}$), completely eliminating ground catapulting.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 6 — Liftoff Thrust Calibration & Ground Stall Resolution (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 106–230):**
+  1. **Ground Stall at 1492 PWM:** With `hover_throttle = 1480 PWM` and the 8cm ground leash, throttle on the ground was capped at `1492 PWM`. Because empirical liftoff thrust on this quad requires `~1570 PWM`, the quad was 80 PWM below unweighting thrust and sat on the ground without lifting off.
+- **Adjustments Made:**
+  - **Calibrated Baseline to 1535 PWM:** Raised `hover_throttle` to `1535 PWM`. As the setpoint slews upward at $0.35\text{ m/s}$, throttle smoothly ramps from `1535 PWM` to the exact `~1570 PWM` liftoff threshold in just $0.6\text{s}$, producing a timely, gentle liftoff without catapulting.
+  - **Removed Ground Leash:** Removed the artificial 8cm ground leash so the standard slew rate guides the liftoff ramp naturally.
+  - **Preserved Expanded Descent Authority & Soft D-Term:** Kept `max_descent_correction = -150.0 PWM` (floor: `1385 PWM`) so that when the quad reaches or exceeds target altitude ($0.40\text{m}$), it can actively cut throttle to descend cleanly away from the cage ceiling, and kept $K_d = 2.2$ to avoid descent kicks.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.

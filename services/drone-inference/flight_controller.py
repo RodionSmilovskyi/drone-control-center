@@ -5,20 +5,20 @@ class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
-        # Hover baseline 1480 PWM tuned for fresh 4S pack (~1460-1480 PWM hover).
+        # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
         # Integral trim (+120 PWM headroom) smoothly elevates throttle for sagged batteries.
-        self.throttle_pid = PIDController(Kp=4.5, Ki=1.2, Kd=2.0, integral_limit=1.2, integral_min=-0.35)
+        self.throttle_pid = PIDController(Kp=4.8, Ki=1.2, Kd=2.2, integral_limit=1.2, integral_min=-0.35)
         self.roll_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.4, integral_limit=0.2, integral_min=-0.2)
         self.pitch_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.4, integral_limit=0.2, integral_min=-0.2)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
-        self.hover_throttle = 1480
+        self.hover_throttle = 1535
         self.min_throttle = 1341
         self.max_throttle = 1800
-        # Expanded descent authority [-135] allows throttle down to 1345 PWM so drone can brake and descend on fresh packs,
-        # headroom [+140] allows throttle up to 1620 PWM for depleted batteries.
+        # Expanded descent authority [-150] allows throttle down to 1385 PWM so drone can brake and descend on fresh packs,
+        # headroom [+140] allows throttle up to 1675 PWM for depleted batteries.
         self.max_climb_correction = 140.0
-        self.max_descent_correction = -135.0
+        self.max_descent_correction = -150.0
         self.max_pid_correction = self.max_climb_correction
         
         # Explicit degree-to-PWM indoor tilt authority limits (SpeedyBee max angle ~50 deg -> 500 PWM)
@@ -95,11 +95,6 @@ class FlightController:
             max_step = self.max_climb_rate_norm * clamped_dt
             delta = desired_alt_norm - self.current_setpoint_norm
             self.current_setpoint_norm += float(np.clip(delta, -max_step, max_step))
-
-        # Ground leash: while on the ground, limit setpoint lead to 8cm to prevent excessive ground P-term buildup
-        if not is_airborne:
-            max_ground_lead = 0.08 / 3.0
-            self.current_setpoint_norm = min(self.current_setpoint_norm, current_alt_norm + max_ground_lead)
 
         self.throttle_pid.setpoint = self.current_setpoint_norm
         self.roll_pid.setpoint = desired_x_norm
