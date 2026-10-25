@@ -83,7 +83,7 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.5` | `3.3` | `[-0.35, +1.20]` | `1550` | `[-75, +130]` | `[1475, 1680]` | Slew rate `0.35 m/s`; anti-windup below `0.020m` |
+| **Throttle (Z)** | `self.throttle_pid` | `4.5` | `1.2` | `2.0` | `[-0.35, +1.20]` | `1480` | `[-135, +140]` | `[1345, 1620]` | Slew 0.35 m/s; 8cm ground leash; anti-windup < 0.020m |
 | **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
@@ -242,4 +242,21 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Reverted Hover Throttle Baseline:** Set `hover_throttle` strictly back to `1550 PWM` (effective range `[1475, 1680]`), preserving smooth ground unweighting without catapulting.
   - **Ground Shift Isolation in `FlightController`:** Whenever `not is_airborne` (on ground below `0.020m`), `ref_shift_x_norm` and `ref_shift_y_norm` are held strictly at `0.0`, preventing any pre-takeoff stale coordinates from corrupting reference setpoints.
   - **Unconditional Ground Reset in `SensorReal`:** In `SensorReal._poll_loop`, whenever `new_alt < 0.04m`, `shift_x`, `shift_y`, and velocity states are unconditionally reset to `0.0` within the lock.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 5 — Fresh Battery Cage Overshoot Analysis & Throttle Authority Fix (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 212–580):**
+  1. **Trapped at Ceiling by Insufficient Descent Authority:** On a fresh 4S LiPo (16.8V), the drone shot up and hit the cage lid at `0.677m`. The PID commanded maximum negative correction, but `max_descent_correction = -75.0` pinned throttle to `1475 PWM` (`1550 - 75`). On a fresh pack, 1475 PWM produces $> 1.0\text{ TWR}$, making it physically impossible for the drone to descend; it stayed glued to the cage lid until manual disarm.
+  2. **Violent D-Term Spike on Descent:** When the quad dipped toward 0.10m, derivative action (`Kd = 3.3`) produced a $+150\text{ PWM}$ spike, kicking throttle to `1659 PWM` and re-launching it into the ceiling.
+  3. **Ground Runaway Setpoint:** Before liftoff, the setpoint slewed to `0.409m` while the quad sat on the ground, driving P-term to $+69\text{ PWM}$ (`1619 PWM` on the ground).
+- **Adjustments Made:**
+  - **Lowered Hover Baseline:** Reduced `hover_throttle` from `1550` to `1480 PWM` (matching fresh pack equilibrium ~1460–1480 PWM). Integral trim (`+120 PWM` headroom) effortlessly lifts throttle for sagged packs.
+  - **Expanded Descent Authority:** Increased `max_descent_correction` from `-75.0` to `-135.0` (floor: `1480 - 135 = 1345 PWM`, safely above `min_throttle = 1341 PWM`), giving the PID full authority to cut power and descend immediately if it ever exceeds the target altitude.
+  - **Softened D-Term Kick:** Reduced `Kd` from `3.3` to `2.0` on `throttle_pid`, preventing violent $+150\text{ PWM}$ spikes on rapid descents.
+  - **Tuned Proportional & Integral Gains:** Set `Kp = 4.5` and `Ki = 1.2` on `throttle_pid`.
+  - **Added Ground Error Leash:** While on the ground (`not is_airborne`), `current_setpoint_norm` is capped to at most `8cm` ($0.0267$ norm) above `current_alt_norm`. Ground P-term is strictly capped to $\le +12\text{ PWM}$ (`ground throttle` $\le 1492\text{ PWM}$), completely eliminating ground catapulting.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
