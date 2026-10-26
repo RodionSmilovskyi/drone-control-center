@@ -84,8 +84,8 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Throttle (Z)** | `self.throttle_pid` | `4.8` | `1.2` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +140]` | `[1385, 1675]` | Slew 0.35 m/s; unweights at ~1570 PWM; anti-windup < 0.020m |
-| **Roll (X)** | `self.roll_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
-| **Pitch (Y)** | `self.pitch_pid` | `0.5` | `0.05` | `0.4` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
+| **Roll (X)** | `self.roll_pid` | `1.2` | `0.15` | `0.45` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
+| **Pitch (Y)** | `self.pitch_pid` | `1.2` | `0.15` | `0.45` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -289,4 +289,20 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
 - **Adjustments Made:**
   - **Non-Blocking Optical Flow Read (`timeout=0.001`):** Passed `timeout=0.001` (1ms) to `self.flow.get_motion(timeout=0.001)` in [`SensorReal._poll_loop`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py#L170-L176). When no motion bit is set within 1ms (`RuntimeError`), `motion` is treated as `(0, 0)` so optical flow and velocity low-pass filters decay smoothly at 100Hz without ever blocking the loop.
   - **Immediate ToF State Commit:** Committed `self.altitude = new_alt` and `self.front_dist = new_front` under `self.lock` immediately after reading the VL53L1X sensors so ToF updates are never delayed by SPI reads.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 8 — Dedicated I2C/SPI Polling Threads & Horizontal PID Authority Tuning (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 83–506):**
+  1. **Vertical Overshoot Eliminated:** Altitude control was rock-solid (`alt` climbed smoothly to `0.301m`, held `0.300m–0.303m` with zero blackouts, and smoothly tracked four `s`-key step-downs from `+0.40m` down to `+0.09m`).
+  2. **Why Horizontal Shift Correction Was Missing (`Roll = 1500, Pitch = 1498–1499`):**
+     - **Premature 1ms Burst Timeout & Filter Decay:** With `get_motion(timeout=0.001)` and `except RuntimeError: motion = (0, 0)`, two problems occurred: (a) above `0.155m` altitude (lines 278–510), PMW3901 shutter exposure time increases so a burst frame takes `5–25ms` to set `dr & 0x80`; aborting after `1ms` caused `get_motion(timeout=0.001)` to time out on 100% of frames above `0.155m` (`sx` and `sy` stayed frozen at `-0.0017m` and `+0.0124m` for 7.6s until `alt` dropped back below `0.153m` at line 511); and (b) feeding synthetic `(0, 0)` on every timeout decayed `filtered_dx`/`filtered_dy` below `FLOW_DEADBAND = 0.05` before pixel motion could integrate (`sy` only integrated `1.2cm` while `front_dist` moved `17.4cm` at lines 188–276).
+     - **Low Horizontal PID Gains (`Kp = 0.5`):** Even for a `10cm` horizontal drift inside the cage, `Kp = 0.5` only produced `5 PWM` (`0.5°` tilt), which is too weak to visibly arrest drift in a confined cage.
+- **Adjustments Made:**
+  - **Split I2C (ToF) and SPI (Optical Flow) Into Dedicated Threads in `SensorReal`:** Created `_poll_tof_loop` (exclusively polling `sensor_down` and `sensor_front` on I2C at 100Hz so altitude never stalls) and `_poll_flow_loop` (exclusively polling `flow.get_motion(timeout=0.05)` on SPI and only updating `filtered_dx`/`filtered_dy` on valid motion frames, restoring full optical flow sensitivity at all altitudes).
+  - **Increased Roll & Pitch PID Gains:** Raised `roll_pid` and `pitch_pid` from `Kp=0.5, Ki=0.05, Kd=0.4` to `Kp=1.2, Ki=0.15, Kd=0.45` (within the `±5°` / `±50 PWM` indoor safety clamp) so a `10cm` drift commands `12 PWM` (`1.2°` tilt) plus integral trim.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.

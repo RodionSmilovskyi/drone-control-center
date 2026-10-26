@@ -8,8 +8,8 @@ class FlightController:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
         # Integral trim (+120 PWM headroom) smoothly elevates throttle for sagged batteries.
         self.throttle_pid = PIDController(Kp=4.8, Ki=1.2, Kd=2.2, integral_limit=1.2, integral_min=-0.35)
-        self.roll_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.4, integral_limit=0.2, integral_min=-0.2)
-        self.pitch_pid = PIDController(Kp=0.5, Ki=0.05, Kd=0.4, integral_limit=0.2, integral_min=-0.2)
+        self.roll_pid = PIDController(Kp=1.2, Ki=0.15, Kd=0.45, integral_limit=0.2, integral_min=-0.2)
+        self.pitch_pid = PIDController(Kp=1.2, Ki=0.15, Kd=0.45, integral_limit=0.2, integral_min=-0.2)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535

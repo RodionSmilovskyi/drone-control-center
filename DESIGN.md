@@ -97,11 +97,11 @@ drone-control-center/
 ## 4.2 Services Description
 
 ### A. `drone-sensors` (`services/drone-sensors/`)
-- **Execution Rate:** ~30 Hz (background polling thread at ~100 Hz).
+- **Execution Rate:** ~30 Hz SHM writer with two isolated background hardware threads (`_poll_tof_loop` on I2C and `_poll_flow_loop` on SPI at ~100 Hz) so optical flow waits never block altitude updates.
 - **Sensors:**
-  - **VL53L1X Downward Time-of-Flight (I2C @ 0x30, GPIO 17 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.6$), committed immediately to shared state before optical flow SPI reads.
-  - **VL53L1X Forward Time-of-Flight (I2C @ 0x31, GPIO 27 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.3$).
-  - **PMW3901 Optical Flow (SPI CS @ GPIO 8):** Non-blocking frame displacement measurement (`get_motion(timeout=0.001)`, defaulting to `(0, 0)` on timeout so ToF polling never stalls when stationary) calibrated via `FLOW_METERS_PER_PIXEL_PER_METER = 0.001997`, low-pass filter ($\alpha = 0.2$), and deadband ($0.05$).
+  - **VL53L1X Downward Time-of-Flight (I2C @ 0x30, GPIO 17 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.6$), polled on dedicated I2C thread `_poll_tof_loop`.
+  - **VL53L1X Forward Time-of-Flight (I2C @ 0x31, GPIO 27 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.3$), polled on `_poll_tof_loop`.
+  - **PMW3901 Optical Flow (SPI CS @ GPIO 8):** Frame displacement measurement (`get_motion(timeout=0.05)` on dedicated SPI thread `_poll_flow_loop`) calibrated via `FLOW_METERS_PER_PIXEL_PER_METER = 0.001997`, low-pass filter ($\alpha = 0.2$), and deadband ($0.05$).
 - **Output:** Writes observations directly to `drone_sensor_data` and updates `system_heartbeats[0]`.
 
 #### B. `drone-inference` (`services/drone-inference/`)
@@ -115,7 +115,7 @@ drone-control-center/
   - `ai`: Accepts normalized 3D spatial shifts `desired_shift_z`, `desired_shift_x`, and `desired_shift_y` in `[-1.0, 1.0]` and computes 4-axis PID-controlled RC commands (`[roll, pitch, throttle, yaw, 1800, 1800]`):
     - **Reference State Latching:** On the first frame when `ai` mode engages, `FlightController` latches the starting normalized altitude (`ref_alt_norm = obs[0] / MAX_ALTITUDE`, `MAX_ALTITUDE = 3.0m`) and starting horizontal shifts (`ref_shift_x_norm`, `ref_shift_y_norm` with `MAX_XY_SHIFT = 1.0m`). Target normalized altitude is $\text{desired\_alt\_norm} = \text{clip}(\text{ref\_alt\_norm} + \text{desired\_shift\_z}, 0.0, 1.0)$ (default `desired_shift_z = +0.1333`, i.e., `+0.40m`), allowing both positive climbs and negative descents relative to the starting altitude.
     - **Throttle PID (`throttle_pid`):** Derivative-on-measurement (`Kp = 4.8, Ki = 1.2, Kd = 2.2`, bidirectional integral clamped to `[-0.35, 1.2]`), paired with Betaflight `vbat_sag_compensation = 100` and hover throttle baseline = `1535` (bounded `[1341, 1800]`), smooth setpoint slew/ramping ($0.35\text{ m/s}$), ground unweight threshold anti-windup ($0.020\text{m}$), and expanded asymmetrical PID correction authority (`[-150, +140]` PWM -> `[1385, 1675]` PWM).
-    - **Roll (`shift_x`) & Pitch (`shift_y`) PIDs (`roll_pid`, `pitch_pid`):** Derivative-on-measurement with gentle indoor gains (`Kp = 0.5, Ki = 0.05, Kd = 0.4, integral_limit = ±0.2`). Parameterized explicitly against the SpeedyBee FC's `50°` max angle limit (`500 PWM` = `50°`, `10 PWM ≈ 1°`) with a safe indoor tilt cap of `max_indoor_tilt_deg = 5.0°` (`±50 PWM`, clamping Roll/Pitch to `[1450, 1550]`). Held strictly neutral (`1500 PWM`) below the `0.020m` ground threshold for level liftoff.
+    - **Roll (`shift_x`) & Pitch (`shift_y`) PIDs (`roll_pid`, `pitch_pid`):** Derivative-on-measurement with responsive indoor gains (`Kp = 1.2, Ki = 0.15, Kd = 0.45, integral_limit = ±0.2`). Parameterized explicitly against the SpeedyBee FC's `50°` max angle limit (`500 PWM` = `50°`, `10 PWM ≈ 1°`) with a safe indoor tilt cap of `max_indoor_tilt_deg = 5.0°` (`±50 PWM`, clamping Roll/Pitch to `[1450, 1550]`). Held strictly neutral (`1500 PWM`) below the `0.020m` ground threshold for level liftoff.
     - **Yaw PID (`yaw_pid`):** Derivative-on-measurement (`Kp = 0.5, Ki = 0.0, Kd = 0.1`), maintaining neutral `1500 PWM` when yaw error is `0.0`.
     - **Testing & Tuning Log:** Detailed testing steps and a mandatory agent tuning log are maintained in [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md). Any agent adjusting PID gains, limits, or shift logic must record its changes in that handoff document.
 - **Output:** Publishes RC packet `[roll, pitch, throttle, yaw, aux1, aux2]` over ZMQ PUB `tcp://127.0.0.1:5556`.

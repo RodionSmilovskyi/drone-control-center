@@ -67,10 +67,14 @@ class SensorReal:
         self.lock = threading.Lock()
         self._init_hardware()
         
-        # Start background polling thread
+        # Start dedicated background polling threads for I2C (ToF) and SPI (Optical Flow)
+        # so that blocking SPI motion waits never stall altitude ToF updates, and SPI burst
+        # reads are never prematurely aborted before frame completion.
         self.stop_thread = False
-        self.poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
-        self.poll_thread.start()
+        self.tof_thread = threading.Thread(target=self._poll_tof_loop, daemon=True)
+        self.flow_thread = threading.Thread(target=self._poll_flow_loop, daemon=True)
+        self.tof_thread.start()
+        self.flow_thread.start()
 
     def _init_hardware(self):
         try:
@@ -119,21 +123,14 @@ class SensorReal:
         except Exception as e:
             self.logger.critical(f"Hardware Initialization Error: {e}")
 
-    def _poll_loop(self):
-        """Background loop to poll sensors at high frequency."""
-        warmup_end = time.time() + 5.0
-        
+    def _poll_tof_loop(self):
+        """Dedicated I2C polling loop for downward (altitude) and forward ToF sensors."""
         while not self.stop_thread:
-            current_time = time.time()
-            dt = current_time - self.last_time
-            self.last_time = current_time
-
             with self.lock:
                 new_alt = self.altitude
                 new_front = self.front_dist
 
             # 1. Altitude Reading
-            raw_alt_m = new_alt
             if self.sensor_down:
                 try:
                     if self.sensor_down.data_ready:
@@ -166,14 +163,20 @@ class SensorReal:
                     self.vel_x_norm = 0.0
                     self.vel_y_norm = 0.0
 
-            # 3. Optical Flow Reading (non-blocking 1ms timeout so ToF altitude polling never stalls)
+            time.sleep(0.01)
+
+    def _poll_flow_loop(self):
+        """Dedicated SPI polling loop for PMW3901 optical flow displacement & velocity."""
+        warmup_end = time.time() + 5.0
+
+        while not self.stop_thread:
+            current_time = time.time()
+            dt = current_time - self.last_time
+            self.last_time = current_time
+
             if self.flow:
                 try:
-                    try:
-                        motion = self.flow.get_motion(timeout=0.001)
-                    except RuntimeError:
-                        motion = (0, 0)
-
+                    motion = self.flow.get_motion(timeout=0.05)
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
@@ -184,8 +187,11 @@ class SensorReal:
                         # 3b. Apply Deadbands to filtered motion
                         f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND else 0.0
                         f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND else 0.0
-                        
-                        integration_alt = max(0.02, new_alt)
+
+                        with self.lock:
+                            cur_alt = self.altitude
+
+                        integration_alt = max(0.02, cur_alt)
 
                         if integration_alt > 0.04: 
                             # distance in meters = counts * alt * (2*tan(FOV/2)/RES)
@@ -211,10 +217,10 @@ class SensorReal:
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
-                                if new_alt < 0.04:
+                                if cur_alt < 0.04:
                                     self.shift_x = 0.0
                                     self.shift_y = 0.0
-                except Exception:
+                except (RuntimeError, Exception):
                     with self.lock:
                         self.vel_x_norm = 0.0
                         self.vel_y_norm = 0.0
