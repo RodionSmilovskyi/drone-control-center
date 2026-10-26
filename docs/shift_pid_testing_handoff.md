@@ -244,19 +244,6 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Unconditional Ground Reset in `SensorReal`:** In `SensorReal._poll_loop`, whenever `new_alt < 0.04m`, `shift_x`, `shift_y`, and velocity states are unconditionally reset to `0.0` within the lock.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
 
-### Entry 6 — Liftoff Thrust Calibration & Ground Stall Resolution (2026-10-25)
-- **Files Modified:**
-  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
-  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
-  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
-- **Telemetry Observations (`logs/inference.log`, flight lines 106–230):**
-  1. **Ground Stall at 1492 PWM:** With `hover_throttle = 1480 PWM` and the 8cm ground leash, throttle on the ground was capped at `1492 PWM`. Because empirical liftoff thrust on this quad requires `~1570 PWM`, the quad was 80 PWM below unweighting thrust and sat on the ground without lifting off.
-- **Adjustments Made:**
-  - **Calibrated Baseline to 1535 PWM:** Raised `hover_throttle` to `1535 PWM`. As the setpoint slews upward at $0.35\text{ m/s}$, throttle smoothly ramps from `1535 PWM` to the exact `~1570 PWM` liftoff threshold in just $0.6\text{s}$, producing a timely, gentle liftoff without catapulting.
-  - **Removed Ground Leash:** Removed the artificial 8cm ground leash so the standard slew rate guides the liftoff ramp naturally.
-  - **Preserved Expanded Descent Authority & Soft D-Term:** Kept `max_descent_correction = -150.0 PWM` (floor: `1385 PWM`) so that when the quad reaches or exceeds target altitude ($0.40\text{m}$), it can actively cut throttle to descend cleanly away from the cage ceiling, and kept $K_d = 2.2$ to avoid descent kicks.
-- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
-
 ### Entry 5 — Fresh Battery Cage Overshoot Analysis & Throttle Authority Fix (2026-10-25)
 - **Files Modified:**
   - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
@@ -285,4 +272,21 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Calibrated Baseline to 1535 PWM:** Raised `hover_throttle` to `1535 PWM`. As the setpoint slews upward at $0.35\text{ m/s}$, throttle smoothly ramps from `1535 PWM` to the exact `~1570 PWM` liftoff threshold in just $0.6\text{s}$, producing a timely, gentle liftoff without catapulting.
   - **Removed Ground Leash:** Removed the artificial 8cm ground leash so the standard slew rate guides the liftoff ramp naturally.
   - **Preserved Expanded Descent Authority & Soft D-Term:** Kept `max_descent_correction = -150.0 PWM` (floor: `1385 PWM`) so that when the quad reaches or exceeds target altitude ($0.40\text{m}$), it can actively cut throttle to descend cleanly away from the cage ceiling, and kept $K_d = 2.2$ to avoid descent kicks.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 7 — Non-Blocking PMW3901 Optical Flow Polling to Eliminate Altitude Blackouts (2026-10-25)
+- **Files Modified:**
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 115–347):**
+  1. **Smooth Liftoff at 0.60s (`1535 -> 1567 PWM`):** The new `1535 PWM` baseline and $0.35\text{ m/s}$ ramp achieved a gentle, timely liftoff at $t=0.60\text{s}$ (`alt = 0.072m`), climbing smoothly to `0.164m` at $t=1.85\text{s}$.
+  2. **Root Cause of Overshoot & Odd Freeze/Jump Behavior — Blocking `flow.get_motion()`:**
+     - In [`sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py), `self.flow.get_motion()` was called with no `timeout` argument, defaulting to `pmw3901`'s `timeout=5.0` seconds. Whenever the drone hovered still horizontally or optical flow temporarily saw zero motion (`MOT` bit `0`), `get_motion()` blocked the entire `_poll_loop` thread—including downward VL53L1X ToF altitude polling—for seconds at a time:
+       - **Lines 171–200 (`19:56:25.034` to `19:56:26.043`):** All 6 sensor readings froze identically at `alt = 0.1639m` for **1.01 seconds** (30 frames). While flying blind during this 1-second sensor blackout, `throttle_pid` kept integrating the stale `0.164m` reading and ramped throttle to `1596 PWM`, driving the drone right past the `0.415m` setpoint into the cage ceiling (`0.665m` when the sensor finally unblocked at line 201).
+       - **Lines 215–233 (`19:56:26.514` to `19:56:27.153`):** Sensor loop froze again for **0.64 seconds** at `alt = 0.564m`; when it unblocked at line 240, the sudden step change (`0.564m -> 0.298m -> 0.208m`) created an artificial derivative kick to `1646 PWM`.
+       - **Lines 246–346 (`19:56:27.557` to `19:56:30.888`):** Sensor loop froze for **3.37 seconds** (101 frames) at `alt = 0.1720m` until manual disarm.
+- **Adjustments Made:**
+  - **Non-Blocking Optical Flow Read (`timeout=0.001`):** Passed `timeout=0.001` (1ms) to `self.flow.get_motion(timeout=0.001)` in [`SensorReal._poll_loop`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py#L170-L176). When no motion bit is set within 1ms (`RuntimeError`), `motion` is treated as `(0, 0)` so optical flow and velocity low-pass filters decay smoothly at 100Hz without ever blocking the loop.
+  - **Immediate ToF State Commit:** Committed `self.altitude = new_alt` and `self.front_dist = new_front` under `self.lock` immediately after reading the VL53L1X sensors so ToF updates are never delayed by SPI reads.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.

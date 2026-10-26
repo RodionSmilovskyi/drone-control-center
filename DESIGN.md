@@ -97,11 +97,11 @@ drone-control-center/
 ## 4.2 Services Description
 
 ### A. `drone-sensors` (`services/drone-sensors/`)
-- **Execution Rate:** ~30 Hz (background optical flow thread at ~100 Hz).
+- **Execution Rate:** ~30 Hz (background polling thread at ~100 Hz).
 - **Sensors:**
-  - **VL53L1X Downward Time-of-Flight (I2C @ 0x30, GPIO 17 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.3$).
+  - **VL53L1X Downward Time-of-Flight (I2C @ 0x30, GPIO 17 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.6$), committed immediately to shared state before optical flow SPI reads.
   - **VL53L1X Forward Time-of-Flight (I2C @ 0x31, GPIO 27 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.3$).
-  - **PMW3901 Optical Flow (SPI CS @ GPIO 8):** Frame displacement measurement calibrated via `FLOW_METERS_PER_PIXEL_PER_METER = 0.001997`, low-pass filter ($\alpha = 0.2$), and deadband ($0.05$).
+  - **PMW3901 Optical Flow (SPI CS @ GPIO 8):** Non-blocking frame displacement measurement (`get_motion(timeout=0.001)`, defaulting to `(0, 0)` on timeout so ToF polling never stalls when stationary) calibrated via `FLOW_METERS_PER_PIXEL_PER_METER = 0.001997`, low-pass filter ($\alpha = 0.2$), and deadband ($0.05$).
 - **Output:** Writes observations directly to `drone_sensor_data` and updates `system_heartbeats[0]`.
 
 #### B. `drone-inference` (`services/drone-inference/`)

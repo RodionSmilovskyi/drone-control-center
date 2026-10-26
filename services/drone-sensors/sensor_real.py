@@ -157,10 +157,23 @@ class SensorReal:
                 except Exception:
                     pass
 
-            # 3. Optical Flow Reading
+            with self.lock:
+                self.altitude = new_alt
+                self.front_dist = new_front
+                if new_alt < 0.04:
+                    self.shift_x = 0.0
+                    self.shift_y = 0.0
+                    self.vel_x_norm = 0.0
+                    self.vel_y_norm = 0.0
+
+            # 3. Optical Flow Reading (non-blocking 1ms timeout so ToF altitude polling never stalls)
             if self.flow:
                 try:
-                    motion = self.flow.get_motion()
+                    try:
+                        motion = self.flow.get_motion(timeout=0.001)
+                    except RuntimeError:
+                        motion = (0, 0)
+
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
@@ -172,7 +185,7 @@ class SensorReal:
                         f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND else 0.0
                         f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND else 0.0
                         
-                        integration_alt = max(0.02, raw_alt_m)
+                        integration_alt = max(0.02, new_alt)
 
                         if integration_alt > 0.04: 
                             # distance in meters = counts * alt * (2*tan(FOV/2)/RES)
@@ -198,22 +211,13 @@ class SensorReal:
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
-                                if raw_alt_m < 0.04:
+                                if new_alt < 0.04:
                                     self.shift_x = 0.0
                                     self.shift_y = 0.0
-                except (RuntimeError, Exception):
+                except Exception:
                     with self.lock:
                         self.vel_x_norm = 0.0
                         self.vel_y_norm = 0.0
-
-            with self.lock:
-                self.altitude = new_alt
-                self.front_dist = new_front
-                if new_alt < 0.04:
-                    self.shift_x = 0.0
-                    self.shift_y = 0.0
-                    self.vel_x_norm = 0.0
-                    self.vel_y_norm = 0.0
 
             time.sleep(0.01)
 
