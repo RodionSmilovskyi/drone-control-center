@@ -83,9 +83,9 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; unweights at ~1570 PWM; anti-windup < 0.045m |
-| **Roll (X)** | `self.roll_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.045m` |
-| **Pitch (Y)** | `self.pitch_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.045m` |
+| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; integral active >= 0.018m |
+| **Roll (X)** | `self.roll_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.050m` (`xy_airborne_threshold_norm`) |
+| **Pitch (Y)** | `self.pitch_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.050m` (`xy_airborne_threshold_norm`) |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -327,4 +327,20 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Reduced Optical Flow Phase Lag & Cleared Filter on Timeout (`sensor_real.py`):** Raised `ALPHA_FLOW` from `0.2` to `0.6` (`ALPHA_VEL = 0.3`) and explicitly zeroed `filtered_dx` and `filtered_dy` on `get_motion` timeout and below the ground threshold.
   - **Raised Ground Threshold to `0.045m`:** Updated `ground_threshold_norm = 0.045 / 3.0` in `FlightController` and `GROUND_ALT_THRESHOLD = 0.045` in `SensorReal` so resting (`~0.030m`) and spin-up vibration (`~0.043m`) never trigger premature PID windup or ground tilts.
   - **Boosted Vertical Climb Adaptation & Ceiling Headroom (`throttle_pid`):** Updated `throttle_pid` to `Kp = 5.2, Ki = 1.8, Kd = 2.2` and expanded `max_climb_correction` from `140.0` to `165.0` (`1700 PWM` ceiling) so the drone climbs briskly out of ground effect even on sagged batteries.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 10 — Decoupling Throttle Integral Threshold from Horizontal Airborne Gate to Fix Liftoff Deadlock (2026-10-27)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 387–594):**
+  1. **Ground Liftoff Catch-22 Deadlock at `1601 PWM` (`alt = 0.0440m < 0.045m`):**
+     - When AI mode engaged at line 387 (`alt = 0.0211m`), the setpoint slewed to `0.4211m` in `1.14s` (line 422), driving proportional throttle (`1535 + 100 * 5.2 * error`) to `1601 PWM`.
+     - At `1601 PWM`, the drone unweighted on its landing gear to `alt = 0.0440m` (lines 451–456) — **1mm shy of the `0.045m` threshold** set in Entry 9!
+     - Because `ground_threshold_norm = 0.045 / 3.0` also gated `throttle_pid`'s integral (`enable_integral = False`), `Throttle` could never increase past `1602 PWM` without crossing `0.045m`, and the drone could not cross `0.045m` on this battery state without the integral adding `+20 PWM` above `1602 PWM`. As a result, `Throttle` stayed frozen at `1600–1603 PWM` (`Roll = 1500, Pitch = 1500`) for 5.8s until manual disarm.
+- **Adjustments Made:**
+  - **Decoupled Throttle Integral Threshold (`ground_threshold_norm = 0.018 / 3.0`) from Horizontal Airborne Gate (`xy_airborne_threshold_norm = 0.050 / 3.0`):**
+    - `throttle_pid` now enables integral accumulation whenever `alt >= 0.018m` (active on the ground at `~0.021–0.030m`), so `Throttle` smoothly continues ramping past `1601 PWM` (`+24 PWM/s` via `Ki = 1.8`) until the quad breaks ground contact and lifts off cleanly regardless of battery state.
+    - `roll_pid`, `pitch_pid`, `yaw_pid`, and horizontal reference origin isolation (`ref_shift_x_norm`, `ref_shift_y_norm`) are gated by `xy_airborne_threshold_norm = 0.050 / 3.0` (`5.0cm`), keeping `Roll` and `Pitch` strictly locked at `1500 PWM` with zero horizontal integral windup until the drone is genuinely airborne above `0.050m`.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.

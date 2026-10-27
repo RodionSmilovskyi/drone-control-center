@@ -28,8 +28,12 @@ class FlightController:
         self.max_rp_correction = (self.max_indoor_tilt_deg / self.fc_max_angle_deg) * 500.0
         self.max_yaw_correction = 50.0
         
-        # Ground threshold: 0.045m (above resting 0.028-0.031m and spin-up vibration ~0.043m) to prevent ground windup
-        self.ground_threshold_norm = 0.045 / 3.0
+        # Ground threshold for throttle integral: 0.018m (below resting ~0.021-0.030m ToF reading)
+        # so throttle_pid can integrate past 1601 PWM to lift off when battery voltage sags.
+        self.ground_threshold_norm = 0.018 / 3.0
+        # Airborne threshold for horizontal Roll/Pitch/Yaw PIDs: 0.050m (above ~0.044m ground unweighting)
+        # so Roll/Pitch stay strictly neutral (1500 PWM) with zero integral windup until genuinely airborne.
+        self.xy_airborne_threshold_norm = 0.050 / 3.0
         
         # Slew rate: 0.35 m/s (~0.117 normalized units/sec) to smoothly lead climb without ceiling overshoot
         self.max_climb_rate_norm = 0.35 / 3.0
@@ -69,18 +73,19 @@ class FlightController:
         desired_shift_y = float(np.clip(high_level_action[2], -1.0, 1.0))
         desired_yaw_norm = float(np.clip(high_level_action[3], -1.0, 1.0))
 
-        is_airborne = current_alt_norm >= self.ground_threshold_norm
+        is_throttle_active = current_alt_norm >= self.ground_threshold_norm
+        is_xy_airborne = current_alt_norm >= self.xy_airborne_threshold_norm
 
         # Latch reference state when AI mode engages (first frame after reset)
         if self.ref_alt_norm is None:
             self.ref_alt_norm = current_alt_norm
         if self.ref_shift_x_norm is None:
-            self.ref_shift_x_norm = current_shift_x_norm if is_airborne else 0.0
+            self.ref_shift_x_norm = current_shift_x_norm if is_xy_airborne else 0.0
         if self.ref_shift_y_norm is None:
-            self.ref_shift_y_norm = current_shift_y_norm if is_airborne else 0.0
+            self.ref_shift_y_norm = current_shift_y_norm if is_xy_airborne else 0.0
 
-        # On the ground before takeoff, horizontal origin is always zero
-        if not is_airborne:
+        # On the ground before takeoff (< 0.050m), horizontal origin is always zero
+        if not is_xy_airborne:
             self.ref_shift_x_norm = 0.0
             self.ref_shift_y_norm = 0.0
 
@@ -102,24 +107,19 @@ class FlightController:
         self.pitch_pid.setpoint = desired_y_norm
         self.yaw_pid.setpoint = desired_yaw_norm
         
-        # Anti-windup: accumulate integral once airborne past ground threshold.
-        # Below setpoint: allow continuous integral accumulation so hover throttle adapts as battery sags.
-        # Above setpoint: decay integral back towards 0 without negative windup.
-        is_airborne = current_alt_norm >= self.ground_threshold_norm
-        enable_integral = is_airborne
-        throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=enable_integral)
+        # Allow throttle integral above 0.018m so the drone can ramp past 1601 PWM to break ground contact.
+        throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=is_throttle_active)
         
-        # Asymmetrical PID bounds: tight descent authority [-75] to eliminate ground bounce,
-        # expanded climb headroom [+130] for battery sag compensation (throttle up to ~1680 PWM)
+        # Asymmetrical PID bounds: descent authority [-150], climb headroom [+165] (throttle up to 1700 PWM)
         pid_correction = np.clip(100.0 * throttle_pid_out, self.max_descent_correction, self.max_climb_correction)
         rc_throttle = self.hover_throttle + pid_correction
 
-        # Compute Roll, Pitch, and Yaw PIDs; keep neutral (1500 PWM) until airborne for level liftoff
-        roll_pid_out = self.roll_pid.compute(current_shift_x_norm, dt, enable_integral=enable_integral)
-        pitch_pid_out = self.pitch_pid.compute(current_shift_y_norm, dt, enable_integral=enable_integral)
-        yaw_pid_out = self.yaw_pid.compute(current_yaw_norm, dt, enable_integral=enable_integral)
+        # Compute Roll, Pitch, and Yaw PIDs; keep neutral (1500 PWM) and integral disabled until > 0.050m
+        roll_pid_out = self.roll_pid.compute(current_shift_x_norm, dt, enable_integral=is_xy_airborne)
+        pitch_pid_out = self.pitch_pid.compute(current_shift_y_norm, dt, enable_integral=is_xy_airborne)
+        yaw_pid_out = self.yaw_pid.compute(current_yaw_norm, dt, enable_integral=is_xy_airborne)
 
-        if is_airborne:
+        if is_xy_airborne:
             roll_correction = np.clip(100.0 * roll_pid_out, -self.max_rp_correction, self.max_rp_correction)
             pitch_correction = np.clip(100.0 * pitch_pid_out, -self.max_rp_correction, self.max_rp_correction)
             yaw_correction = np.clip(100.0 * yaw_pid_out, -self.max_yaw_correction, self.max_yaw_correction)
