@@ -56,10 +56,11 @@ class SensorReal:
         
         # Deadbands and Smoothing
         self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
-        self.ALPHA_FLOW = 0.2    # Slightly faster response
+        self.ALPHA_FLOW = 0.6    # Low phase lag on optical flow to prevent position overshoot
         self.ALPHA_ALT = 0.6     # Lower phase lag for altitude feedback
         self.ALPHA_FRONT = 0.3
-        self.ALPHA_VEL = 0.2
+        self.ALPHA_VEL = 0.3
+        self.GROUND_ALT_THRESHOLD = 0.045  # Above resting/spin-up ground height (~0.028-0.043m)
 
         self.filtered_dx = 0.0
         self.filtered_dy = 0.0
@@ -157,11 +158,13 @@ class SensorReal:
             with self.lock:
                 self.altitude = new_alt
                 self.front_dist = new_front
-                if new_alt < 0.04:
+                if new_alt < self.GROUND_ALT_THRESHOLD:
                     self.shift_x = 0.0
                     self.shift_y = 0.0
                     self.vel_x_norm = 0.0
                     self.vel_y_norm = 0.0
+                    self.filtered_dx = 0.0
+                    self.filtered_dy = 0.0
 
             time.sleep(0.01)
 
@@ -193,7 +196,7 @@ class SensorReal:
 
                         integration_alt = max(0.02, cur_alt)
 
-                        if integration_alt > 0.04: 
+                        if integration_alt >= self.GROUND_ALT_THRESHOLD: 
                             # distance in meters = counts * alt * (2*tan(FOV/2)/RES)
                             d_shift_x_m = f_dx * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
                             d_shift_y_m = f_dy * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
@@ -217,13 +220,17 @@ class SensorReal:
                             with self.lock:
                                 self.vel_x_norm = 0.0
                                 self.vel_y_norm = 0.0
-                                if cur_alt < 0.04:
+                                self.filtered_dx = 0.0
+                                self.filtered_dy = 0.0
+                                if cur_alt < self.GROUND_ALT_THRESHOLD:
                                     self.shift_x = 0.0
                                     self.shift_y = 0.0
                 except (RuntimeError, Exception):
                     with self.lock:
                         self.vel_x_norm = 0.0
                         self.vel_y_norm = 0.0
+                        self.filtered_dx = 0.0
+                        self.filtered_dy = 0.0
 
             time.sleep(0.01)
 

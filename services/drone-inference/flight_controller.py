@@ -6,18 +6,19 @@ class FlightController:
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
-        # Integral trim (+120 PWM headroom) smoothly elevates throttle for sagged batteries.
-        self.throttle_pid = PIDController(Kp=4.8, Ki=1.2, Kd=2.2, integral_limit=1.2, integral_min=-0.35)
-        self.roll_pid = PIDController(Kp=1.2, Ki=0.15, Kd=0.45, integral_limit=0.2, integral_min=-0.2)
-        self.pitch_pid = PIDController(Kp=1.2, Ki=0.15, Kd=0.45, integral_limit=0.2, integral_min=-0.2)
+        # Integral trim (+165 PWM headroom -> 1700 PWM ceiling) briskly elevates throttle for sagged batteries.
+        self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.2, integral_min=-0.35)
+        # Overdamped horizontal PIDs (Kd/Kp ≈ 0.85, minimal Ki) prevent circular/toilet-bowl overshoot
+        self.roll_pid = PIDController(Kp=0.65, Ki=0.02, Kd=0.55, integral_limit=0.15, integral_min=-0.15)
+        self.pitch_pid = PIDController(Kp=0.65, Ki=0.02, Kd=0.55, integral_limit=0.15, integral_min=-0.15)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535
         self.min_throttle = 1341
         self.max_throttle = 1800
         # Expanded descent authority [-150] allows throttle down to 1385 PWM so drone can brake and descend on fresh packs,
-        # headroom [+140] allows throttle up to 1675 PWM for depleted batteries.
-        self.max_climb_correction = 140.0
+        # headroom [+165] allows throttle up to 1700 PWM for depleted batteries.
+        self.max_climb_correction = 165.0
         self.max_descent_correction = -150.0
         self.max_pid_correction = self.max_climb_correction
         
@@ -27,8 +28,8 @@ class FlightController:
         self.max_rp_correction = (self.max_indoor_tilt_deg / self.fc_max_angle_deg) * 500.0
         self.max_yaw_correction = 50.0
         
-        # Ground threshold: ~0.020m (landing gear height ~0.013m) to enable integral once unweighted
-        self.ground_threshold_norm = 0.020 / 3.0
+        # Ground threshold: 0.045m (above resting 0.028-0.031m and spin-up vibration ~0.043m) to prevent ground windup
+        self.ground_threshold_norm = 0.045 / 3.0
         
         # Slew rate: 0.35 m/s (~0.117 normalized units/sec) to smoothly lead climb without ceiling overshoot
         self.max_climb_rate_norm = 0.35 / 3.0

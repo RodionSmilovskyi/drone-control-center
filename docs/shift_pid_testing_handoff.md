@@ -83,9 +83,9 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `4.8` | `1.2` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +140]` | `[1385, 1675]` | Slew 0.35 m/s; unweights at ~1570 PWM; anti-windup < 0.020m |
-| **Roll (X)** | `self.roll_pid` | `1.2` | `0.15` | `0.45` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
-| **Pitch (Y)** | `self.pitch_pid` | `1.2` | `0.15` | `0.45` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.020m` |
+| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; unweights at ~1570 PWM; anti-windup < 0.045m |
+| **Roll (X)** | `self.roll_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.045m` |
+| **Pitch (Y)** | `self.pitch_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.045m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -305,4 +305,26 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
 - **Adjustments Made:**
   - **Split I2C (ToF) and SPI (Optical Flow) Into Dedicated Threads in `SensorReal`:** Created `_poll_tof_loop` (exclusively polling `sensor_down` and `sensor_front` on I2C at 100Hz so altitude never stalls) and `_poll_flow_loop` (exclusively polling `flow.get_motion(timeout=0.05)` on SPI and only updating `filtered_dx`/`filtered_dy` on valid motion frames, restoring full optical flow sensitivity at all altitudes).
   - **Increased Roll & Pitch PID Gains:** Raised `roll_pid` and `pitch_pid` from `Kp=0.5, Ki=0.05, Kd=0.4` to `Kp=1.2, Ki=0.15, Kd=0.45` (within the `±5°` / `±50 PWM` indoor safety clamp) so a `10cm` drift commands `12 PWM` (`1.2°` tilt) plus integral trim.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 9 — Eliminating Circular/Toilet-Bowl Oscillation, Ground Windup, and Low-Altitude Stall (2026-10-27)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 120–298):**
+  1. **Divergent Circular / Toilet-Bowl Oscillation in Roll & Pitch:**
+     - With Entry 8's aggressive horizontal gains (`Kp = 1.2, Ki = 0.15, Kd = 0.45`), initial liftoff drift (`sx = +0.076m, sy = +0.089m`) triggered strong corrective tilts (`Roll = 1488`, `Pitch = 1486`) and integral accumulation. Because $K_d / K_p$ was only $0.375$ and `Ki = 0.15` wound up during the approach, the quad accelerated right through `(0, 0)` without braking (`Roll = 1505` at `sx = 0.0m, vx = -0.031`), overshooting to `sx = -0.217m` (`Roll = 1534`) and `sy = -0.282m` (`Pitch = 1550` hard 5° rail), and then whipping back to `sx = +0.201m` (`Roll = 1457, Pitch = 1473`). Because X and Y were ~90° out of phase, the drone spiraled in widening circles.
+  2. **Optical Flow Phase Lag & Uncleared Filter State (`sensor_real.py`):**
+     - `ALPHA_FLOW = 0.2` applied heavy smoothing before position integration (`shift_x += d_shift_x_m`), adding ~150ms of phase lag so `shift_x`/`shift_y` continued integrating in the old direction after the drone stopped and reversed. Additionally, when `flow.get_motion(timeout=0.05)` timed out, `filtered_dx` and `filtered_dy` were not cleared.
+  3. **Premature Ground Airborne Detection (`0.020m` threshold vs `0.028m–0.043m` ground reading):**
+     - On the floor in `disarmed`/`armed` modes (lines 1–120), downward ToF reads `0.028m–0.031m`, and during pre-liftoff spin-up vibration (lines 134–147) reads `0.042m–0.043m`. Because `ground_threshold_norm` was `0.020m` (and flow cutoff was `0.040m`), the controller treated the stationary/vibrating drone on the floor as airborne from frame 0, integrating ground vibration into `sx`/`sy` and tilting `Roll = 1494` before liftoff.
+  4. **Low-Altitude Wallowing (`0.07m–0.14m`) & Throttle Ceiling Saturation (`1674 / 1675 PWM`):**
+     - While banking up to `5°` in ground-effect turbulence on a partially depleted battery, `throttle_pid` (`Kp = 4.8, Ki = 1.2`) took 6 seconds to ramp `Throttle` from `1535` up to `1674 PWM` (saturating against the `1675 PWM` ceiling at line 296) while altitude stayed trapped at `0.07m–0.14m`.
+- **Adjustments Made:**
+  - **Overdamped Horizontal PIDs (`roll_pid`, `pitch_pid`):** Tuned to `Kp = 0.65, Ki = 0.02, Kd = 0.55` (`integral_limit = ±0.15`). High damping-to-proportional ratio ($K_d / K_p \approx 0.85$) brakes horizontal velocity *before* crossing `(0, 0)`, and minimal `Ki = 0.02` eliminates integral-windup toilet-bowling.
+  - **Reduced Optical Flow Phase Lag & Cleared Filter on Timeout (`sensor_real.py`):** Raised `ALPHA_FLOW` from `0.2` to `0.6` (`ALPHA_VEL = 0.3`) and explicitly zeroed `filtered_dx` and `filtered_dy` on `get_motion` timeout and below the ground threshold.
+  - **Raised Ground Threshold to `0.045m`:** Updated `ground_threshold_norm = 0.045 / 3.0` in `FlightController` and `GROUND_ALT_THRESHOLD = 0.045` in `SensorReal` so resting (`~0.030m`) and spin-up vibration (`~0.043m`) never trigger premature PID windup or ground tilts.
+  - **Boosted Vertical Climb Adaptation & Ceiling Headroom (`throttle_pid`):** Updated `throttle_pid` to `Kp = 5.2, Ki = 1.8, Kd = 2.2` and expanded `max_climb_correction` from `140.0` to `165.0` (`1700 PWM` ceiling) so the drone climbs briskly out of ground effect even on sagged batteries.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
