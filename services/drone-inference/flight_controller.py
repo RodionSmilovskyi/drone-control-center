@@ -8,11 +8,11 @@ class FlightController:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
         # Integral trim (+165 PWM headroom -> 1700 PWM ceiling) briskly elevates throttle for sagged batteries.
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.2, integral_min=-0.35, d_alpha=0.6)
-        # Horizontal PIDs: Kp=0.90 arrests drift within 5-10cm; Ki=0.25 with integral_limit=±0.60 provides up to ±15 PWM
-        # (±1.5 deg) steady-state trim authority to cancel battery CG / trim offset; Kd=0.40 with heavy derivative smoothing
-        # (d_alpha=0.25) damps translational velocity while rejecting 1-frame optical-flow rotational tilt spikes.
-        self.roll_pid = PIDController(Kp=0.90, Ki=0.25, Kd=0.40, integral_limit=0.60, integral_min=-0.60, d_alpha=0.25)
-        self.pitch_pid = PIDController(Kp=0.90, Ki=0.25, Kd=0.40, integral_limit=0.60, integral_min=-0.60, d_alpha=0.25)
+        # Horizontal PIDs: Kp=1.00 (10 PWM / 1 deg per 10cm) + Kd=0.65 (d_alpha=0.40) arrests drift within 5-8cm
+        # and actively brakes return velocity 5-8cm before crossing origin; Ki=0.06 with integral_limit=±0.50 (±3 PWM max)
+        # trims residual bias without winding up during excursions and canceling zero-crossing braking.
+        self.roll_pid = PIDController(Kp=1.00, Ki=0.06, Kd=0.65, integral_limit=0.50, integral_min=-0.50, d_alpha=0.40)
+        self.pitch_pid = PIDController(Kp=1.00, Ki=0.06, Kd=0.65, integral_limit=0.50, integral_min=-0.50, d_alpha=0.40)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535
@@ -28,7 +28,7 @@ class FlightController:
         self.fc_max_angle_deg = 50.0
         self.max_indoor_tilt_deg = 5.0
         self.max_rp_correction = (self.max_indoor_tilt_deg / self.fc_max_angle_deg) * 500.0
-        self.max_rp_slew_rate = 180.0  # Max 180 PWM/s (18 deg/s -> ~6 PWM per 33ms frame) to prevent attitude-snap flow spikes
+        self.max_rp_slew_rate = 250.0  # Max 250 PWM/s (25 deg/s -> ~8.3 PWM per 33ms frame) for crisp braking without attitude snaps
         self.max_yaw_correction = 50.0
         
         # Ground threshold for throttle integral: 0.018m (below resting ~0.021-0.030m ToF reading)

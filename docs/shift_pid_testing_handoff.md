@@ -84,8 +84,8 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; integral active >= 0.018m |
-| **Roll (X)** | `self.roll_pid` | `0.90` | `0.25` | `0.40` | `[-0.60, +0.60]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.25`, slew `180 PWM/s`; locked to `1500` < `0.050m` |
-| **Pitch (Y)** | `self.pitch_pid` | `0.90` | `0.25` | `0.40` | `[-0.60, +0.60]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.25`, slew `180 PWM/s`; locked to `1500` < `0.050m` |
+| **Roll (X)** | `self.roll_pid` | `1.00` | `0.06` | `0.65` | `[-0.50, +0.50]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.40`, slew `250 PWM/s`; locked to `1500` < `0.050m` |
+| **Pitch (Y)** | `self.pitch_pid` | `1.00` | `0.06` | `0.65` | `[-0.50, +0.50]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.40`, slew `250 PWM/s`; locked to `1500` < `0.050m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -368,4 +368,24 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Added Derivative Low-Pass Filter Parameter (`d_alpha = 0.25` for Roll/Pitch):** Added `d_alpha` to [`PIDController`](file:///home/rodion/projects/drone-control-center/services/drone-inference/pid_controller.py) (default `0.6` for `throttle_pid`, `0.25` for `roll_pid`/`pitch_pid`), attenuating single-frame optical-flow rotational spikes by `2.4x`.
   - **Added Roll/Pitch Command Slew Limiter (`max_rp_slew_rate = 180.0 PWM/s`):** Capped Roll/Pitch command rate of change in [`FlightController`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py) to `180 PWM/s` (`18°/s` $\approx 6\text{ PWM}$ per `33ms` frame), preventing `30–60 PWM` single-frame attitude snaps that corrupt the downward optical flow sensor while still reaching a `20 PWM` (`2°`) corrective tilt in `0.11s`.
   - **Reduced Optical Flow Timeout to `25ms` with Smooth Velocity Decay (`sensor_real.py`):** Lowered `flow.get_motion(timeout=0.025)` and decayed `vel_x_norm`/`vel_y_norm` by `1 - ALPHA_VEL` on timeout instead of hard-zeroing or sleeping an extra 10ms.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 12 — Eliminating Zero-Crossing Integral Overshoot & Strengthening Return Braking (2026-10-27)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 120–358, 8.0s AI flight):**
+  1. **Attitude Chatter Completely Eliminated & Final Hover Dead-Still:**
+     - `d_alpha` filtering and `max_rp_slew_rate` eliminated all single-frame `35–60 PWM` D-term spikes.
+     - Initial climb (`t = 0.0s -> 2.6s`, lines 120–198) had zero altitude overshoot (`alt = 0.366m`), arrested initial X drift at `+0.102m` (half of the previous `+0.212m`), and held `sy` within `[-0.011m, +0.033m]`.
+     - In the final `1.0s` of flight (`lines 332–358`), the drone achieved a dead-still hover (`vx ≈ 0, vy ≈ 0`, `alt = 0.333m ± 0.005m`, `front_dist = 0.100m ± 0.004m`, `sx = 0.098m ± 0.003m`, `sy = 0.110m ± 0.002m`) with steady `Roll = 1489–1490, Pitch = 1493–1494`.
+  2. **Root Cause of Mid-Flight Overshoot Swing (`sx -> -0.249m` at line 245, `sy -> -0.230m` at line 284):**
+     - **Integral Windup Fighting Zero-Crossing Braking:** While `sx` was positive (`t = 0.4s -> 3.4s`), `Ki = 0.25` accumulated `-6.2 PWM` of integral. As the drone accelerated back toward `sx = 0` at `-0.26 m/s` (lines 220–223), that `-6.2 PWM` integral canceled out 60% of the `+10.4 PWM` derivative braking (`Roll = 1500–1503` at `sx = 0.0m`), causing the drone to coast past `0` to `-0.249m`. Similarly, while `sy` was negative (`t = 3.8s -> 6.4s`), `pitch_pid.integral` wound up to `+9.1 PWM`, canceling braking at `sy = 0.0m` (line 312, `Pitch = 1495` at `+0.50 m/s`) and holding a residual `+3.4 PWM` offset after the drone stopped at `sy = +0.110m` (lines 333–358).
+     - **Insufficient Return Braking (`Kd = 0.40, d_alpha = 0.25`):** When approaching origin at `0.30–0.45 m/s`, `Kd = 0.40` with `d_alpha = 0.25` did not reverse the tilt angle early enough (`5–8cm` before origin) to bleed off momentum before crossing `0`.
+- **Adjustments Made:**
+  - **Reduced Horizontal Integral (`Ki = 0.06, integral_limit = ±0.50` $\rightarrow \pm 3.0\text{ PWM}$ max):** Prevents integral windup during a `1–2s` excursion (`< 1 PWM` accumulated) from canceling out derivative braking at zero-crossing or holding a post-overshoot position offset, while still trimming up to `±3 PWM` of steady bias.
+  - **Increased Proportional & Derivative Braking (`Kp = 1.00, Kd = 0.65, d_alpha = 0.40, max_rp_slew_rate = 250.0 PWM/s`):**
+    - When drifting away from `0` (`5cm` position + `10 cm/s` velocity), `P` and `D` combine for `11.5 PWM` (`1.15°` tilt) to arrest drift tightly.
+    - When returning toward `0` (`5cm` from origin at `20 cm/s`), `D` (`+13.0 PWM`) dominates `P` (`-5.0 PWM`), applying `+7.4 PWM` braking tilt *before* reaching `(0, 0)` so the drone stops at origin without overshooting.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
