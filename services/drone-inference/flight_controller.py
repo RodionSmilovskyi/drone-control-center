@@ -8,11 +8,11 @@ class FlightController:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
         # Integral trim (+165 PWM headroom -> 1700 PWM ceiling) briskly elevates throttle for sagged batteries.
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.2, integral_min=-0.35, d_alpha=0.6)
-        # Horizontal PIDs: Kp=1.00 (10 PWM / 1 deg per 10cm) + Kd=0.65 (d_alpha=0.40) arrests drift within 5-8cm
-        # and actively brakes return velocity 5-8cm before crossing origin; Ki=0.06 with integral_limit=±0.50 (±3 PWM max)
-        # trims residual bias without winding up during excursions and canceling zero-crossing braking.
-        self.roll_pid = PIDController(Kp=1.00, Ki=0.06, Kd=0.65, integral_limit=0.50, integral_min=-0.50, d_alpha=0.40)
-        self.pitch_pid = PIDController(Kp=1.00, Ki=0.06, Kd=0.65, integral_limit=0.50, integral_min=-0.50, d_alpha=0.40)
+        # Horizontal PIDs: Gentle indoor gains (Kp=0.48, Ki=0.08, Kd=0.35, integral_limit=±0.80 -> ±6.4 PWM max trim,
+        # d_alpha=0.35) keep corrective bank angles within ~1-1.5 deg (±10-15 PWM), arresting drift without over-tilting
+        # to ±37-50 PWM and exciting limit-cycle oscillations across origin.
+        self.roll_pid = PIDController(Kp=0.48, Ki=0.08, Kd=0.35, integral_limit=0.80, integral_min=-0.80, d_alpha=0.35)
+        self.pitch_pid = PIDController(Kp=0.48, Ki=0.08, Kd=0.35, integral_limit=0.80, integral_min=-0.80, d_alpha=0.35)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535
@@ -28,7 +28,7 @@ class FlightController:
         self.fc_max_angle_deg = 50.0
         self.max_indoor_tilt_deg = 5.0
         self.max_rp_correction = (self.max_indoor_tilt_deg / self.fc_max_angle_deg) * 500.0
-        self.max_rp_slew_rate = 250.0  # Max 250 PWM/s (25 deg/s -> ~8.3 PWM per 33ms frame) for crisp braking without attitude snaps
+        self.max_rp_slew_rate = 350.0  # Max 350 PWM/s (~11.5 PWM per 33ms frame) to avoid unwind phase lag at turnaround
         self.max_yaw_correction = 50.0
         
         # Ground threshold for throttle integral: 0.018m (below resting ~0.021-0.030m ToF reading)

@@ -56,7 +56,7 @@ class SensorReal:
         
         # Deadbands and Smoothing
         self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
-        self.ALPHA_FLOW = 0.6    # Low phase lag on optical flow to prevent position overshoot
+        self.ALPHA_FLOW = 0.35   # Balanced smoothing on optical flow to suppress tilt-rate noise without excessive lag
         self.ALPHA_ALT = 0.6     # Lower phase lag for altitude feedback
         self.ALPHA_FRONT = 0.3
         self.ALPHA_VEL = 0.3

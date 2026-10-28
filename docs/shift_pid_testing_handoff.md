@@ -84,8 +84,8 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; integral active >= 0.018m |
-| **Roll (X)** | `self.roll_pid` | `1.00` | `0.06` | `0.65` | `[-0.50, +0.50]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.40`, slew `250 PWM/s`; locked to `1500` < `0.050m` |
-| **Pitch (Y)** | `self.pitch_pid` | `1.00` | `0.06` | `0.65` | `[-0.50, +0.50]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.40`, slew `250 PWM/s`; locked to `1500` < `0.050m` |
+| **Roll (X)** | `self.roll_pid` | `0.48` | `0.08` | `0.35` | `[-0.80, +0.80]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.35`, slew `350 PWM/s`; locked to `1500` < `0.050m` |
+| **Pitch (Y)** | `self.pitch_pid` | `0.48` | `0.08` | `0.35` | `[-0.80, +0.80]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.35`, slew `350 PWM/s`; locked to `1500` < `0.050m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -388,4 +388,24 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Increased Proportional & Derivative Braking (`Kp = 1.00, Kd = 0.65, d_alpha = 0.40, max_rp_slew_rate = 250.0 PWM/s`):**
     - When drifting away from `0` (`5cm` position + `10 cm/s` velocity), `P` and `D` combine for `11.5 PWM` (`1.15°` tilt) to arrest drift tightly.
     - When returning toward `0` (`5cm` from origin at `20 cm/s`), `D` (`+13.0 PWM`) dominates `P` (`-5.0 PWM`), applying `+7.4 PWM` braking tilt *before* reaching `(0, 0)` so the drone stops at origin without overshooting.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 13 — Eliminating High-Gain Roll Limit-Cycle Oscillation (2026-10-27)
+- **Files Modified:**
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 126–463, 11.3s AI flight):**
+  1. **Pitch (`sy`) & Altitude (`alt`) Were Rock-Solid for 10 Seconds:**
+     - From $t=0.0\text{s}$ to $t=9.9\text{s}$ (lines 127–422), `sy` stayed within `[-0.058m, +0.084m]`, and for 3.2 consecutive seconds (`t = 6.0s -> 9.2s`, lines 308–403) held right on origin within `[-0.015m, +0.034m]` (`front_dist` steady at `0.28m–0.34m`, `Pitch` within `1494–1504 PWM`).
+  2. **Why Roll (`sx`) Entered a Limit-Cycle Oscillation (`+0.087m -> -0.241m -> +0.159m -> -0.233m -> +0.173m`):**
+     - On the initial climb (`t = 0.0s -> 2.1s`, lines 127–191), only **`-10 PWM` (`Roll = 1490`, `-1.0°` tilt)** was needed to completely stop rightward drift at `sx = +0.0869m` (`+8.7cm`), and only **`+4 PWM` (`Pitch = 1504`, `+0.4°` tilt)** was needed to stop backward drift at `sy = -0.034m`.
+     - However, with `Kp = 1.00, Kd = 0.65` (3x–4x higher than needed for this high-TWR airframe), as `sx` returned across `0.0m`, `P + D` drove `Roll` to **`1537 PWM` (`+3.7°`)** (line 237), **`1450 PWM` (`-5.0°` hard rail)** (line 272), **`1540 PWM` (`+4.0°`)** (line 406), and **`1450 PWM`** (line 443). Tilting `3.7°–5.0°` accelerated the quadcopter to `0.60–0.80 m/s` inside the small cage (where stopping distance $\frac{v^2}{2a} \approx 27\text{cm}$ exceeds the distance to origin), and unwinding `-50 PWM` at `250 PWM/s` took 6 frames (`0.20s`) after turnaround, sustaining the side-to-side oscillation.
+- **Adjustments Made:**
+  - **Returned Horizontal PIDs to Gentle, Overdamped Indoor Gains (`Kp = 0.48, Ki = 0.08, Kd = 0.35, integral_limit = ±0.80 -> ±6.4 PWM max trim, d_alpha = 0.35`):**
+    - Keeps corrective tilts in the `1.0°–1.5°` (`10–15 PWM`) range that empirically arrested `sx` at `8.7cm` and `sy` at `3.4cm`, preventing the `37–50 PWM` over-tilts that launch the drone across the origin at `0.60+ m/s`.
+    - High damping ratio ($K_d / K_p = 0.73$) smoothly brakes return velocity (`10–15 cm/s`) without slamming into the `±50 PWM` rails.
+    - `Ki = 0.08` (`±6.4 PWM` max) gently trims out the `~4–6 PWM` hover bias without winding up during swings.
+  - **Increased `max_rp_slew_rate` to `350.0 PWM/s` and Set `ALPHA_FLOW = 0.35` (`sensor_real.py`):** Eliminates slew-unwind phase lag at turnaround and smooths optical flow pixel bursts.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
