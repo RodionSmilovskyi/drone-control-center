@@ -6,21 +6,21 @@ class FlightController:
     def __init__(self):
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
-        # Integral trim (+165 PWM headroom -> 1700 PWM ceiling) briskly elevates throttle for sagged batteries.
-        self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.2, integral_min=-0.35, d_alpha=0.6)
-        # Horizontal PIDs: Gentle indoor gains (Kp=0.48, Ki=0.08, Kd=0.35, integral_limit=±0.80 -> ±6.4 PWM max trim,
-        # d_alpha=0.35) keep corrective bank angles within ~1-1.5 deg (±10-15 PWM), arresting drift without over-tilting
-        # to ±37-50 PWM and exciting limit-cycle oscillations across origin.
-        self.roll_pid = PIDController(Kp=0.48, Ki=0.08, Kd=0.35, integral_limit=0.80, integral_min=-0.80, d_alpha=0.35)
-        self.pitch_pid = PIDController(Kp=0.48, Ki=0.08, Kd=0.35, integral_limit=0.80, integral_min=-0.80, d_alpha=0.35)
+        # Integral trim (+185 PWM headroom -> 1720 PWM ceiling) briskly elevates throttle for sagged batteries.
+        self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
+        # Horizontal PIDs: Overdamped velocity-braking gains (Kp=0.75, Ki=0.35, Kd=0.85, integral_limit=±0.50 -> ±17.5 PWM max trim,
+        # d_alpha=0.35, anti_windup_return=True). Kd > Kp caps return velocity to ~10-15 cm/s so the drone never accelerates into
+        # the opposite barrier, while Ki=0.35 + anti_windup_return rapidly unsticks the drone if stalled against a barrier.
+        self.roll_pid = PIDController(Kp=0.75, Ki=0.35, Kd=0.85, integral_limit=0.50, integral_min=-0.50, d_alpha=0.35, anti_windup_return=True)
+        self.pitch_pid = PIDController(Kp=0.75, Ki=0.35, Kd=0.85, integral_limit=0.50, integral_min=-0.50, d_alpha=0.35, anti_windup_return=True)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535
         self.min_throttle = 1341
         self.max_throttle = 1800
         # Expanded descent authority [-150] allows throttle down to 1385 PWM so drone can brake and descend on fresh packs,
-        # headroom [+165] allows throttle up to 1700 PWM for depleted batteries.
-        self.max_climb_correction = 165.0
+        # headroom [+185] allows throttle up to 1720 PWM as battery voltage sags across flights.
+        self.max_climb_correction = 185.0
         self.max_descent_correction = -150.0
         self.max_pid_correction = self.max_climb_correction
         
