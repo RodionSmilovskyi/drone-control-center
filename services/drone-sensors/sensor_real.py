@@ -179,7 +179,7 @@ class SensorReal:
 
             if self.flow:
                 try:
-                    motion = self.flow.get_motion(timeout=0.05)
+                    motion = self.flow.get_motion(timeout=0.025)
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
                         
@@ -225,14 +225,15 @@ class SensorReal:
                                 if cur_alt < self.GROUND_ALT_THRESHOLD:
                                     self.shift_x = 0.0
                                     self.shift_y = 0.0
+                    time.sleep(0.01)
                 except (RuntimeError, Exception):
                     with self.lock:
-                        self.vel_x_norm = 0.0
-                        self.vel_y_norm = 0.0
+                        self.vel_x_norm *= (1.0 - self.ALPHA_VEL)
+                        self.vel_y_norm *= (1.0 - self.ALPHA_VEL)
                         self.filtered_dx = 0.0
                         self.filtered_dy = 0.0
-
-            time.sleep(0.01)
+            else:
+                time.sleep(0.01)
 
     def reset_shifts(self):
         with self.lock:

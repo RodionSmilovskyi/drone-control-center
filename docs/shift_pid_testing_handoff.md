@@ -84,8 +84,8 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; integral active >= 0.018m |
-| **Roll (X)** | `self.roll_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.050m` (`xy_airborne_threshold_norm`) |
-| **Pitch (Y)** | `self.pitch_pid` | `0.65` | `0.02` | `0.55` | `[-0.15, +0.15]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Locked to `1500` below `0.050m` (`xy_airborne_threshold_norm`) |
+| **Roll (X)** | `self.roll_pid` | `0.90` | `0.25` | `0.40` | `[-0.60, +0.60]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.25`, slew `180 PWM/s`; locked to `1500` < `0.050m` |
+| **Pitch (Y)** | `self.pitch_pid` | `0.90` | `0.25` | `0.40` | `[-0.60, +0.60]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.25`, slew `180 PWM/s`; locked to `1500` < `0.050m` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -343,4 +343,29 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Decoupled Throttle Integral Threshold (`ground_threshold_norm = 0.018 / 3.0`) from Horizontal Airborne Gate (`xy_airborne_threshold_norm = 0.050 / 3.0`):**
     - `throttle_pid` now enables integral accumulation whenever `alt >= 0.018m` (active on the ground at `~0.021–0.030m`), so `Throttle` smoothly continues ramping past `1601 PWM` (`+24 PWM/s` via `Ki = 1.8`) until the quad breaks ground contact and lifts off cleanly regardless of battery state.
     - `roll_pid`, `pitch_pid`, `yaw_pid`, and horizontal reference origin isolation (`ref_shift_x_norm`, `ref_shift_y_norm`) are gated by `xy_airborne_threshold_norm = 0.050 / 3.0` (`5.0cm`), keeping `Roll` and `Pitch` strictly locked at `1500 PWM` with zero horizontal integral windup until the drone is genuinely airborne above `0.050m`.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 11 — Horizontal Trim Authority, D-Term Tilt-Spike Filtering & Roll/Pitch Slew Limiting (2026-10-27)
+- **Files Modified:**
+  - [`services/drone-inference/pid_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/pid_controller.py)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 123–404, 9.5s AI flight on fresh battery):**
+  1. **Vertical Liftoff & Altitude Hold Resolved:** Decoupling `ground_threshold_norm` (`0.018m`) from `xy_airborne_threshold_norm` (`0.050m`) worked cleanly: the drone lifted off at $t=0.30\text{s}$ (`1545 PWM`), peaked gently at `0.512m` without touching the cage ceiling, and hovered around `0.30m–0.48m` (`Throttle` `1520–1589 PWM`).
+  2. **Root Cause 1 of Poor Horizontal Stabilization — Zero Effective Integral Trim Authority (`0.30 PWM` max!):**
+     - With Entry 9's `Ki = 0.02` and `integral_limit = ±0.15`, the maximum possible integral output on `roll_pid` and `pitch_pid` was $100 \times 0.02 \times 0.15 = \mathbf{0.30\text{ PWM}}$ (`0.03°`), which rounds to **`0 PWM`** when cast to integer RC commands!
+     - Because the physical quadcopter has a `~10–14 PWM` (`1.0°–1.4°`) natural CG/battery/accelerometer trim offset (`Roll ≈ 1488 PWM, Pitch ≈ 1514 PWM` required for zero-drift hover), having zero integral trim forced a permanent steady-state position error of $e = \frac{13\text{ PWM}}{100 \times 0.65} = \mathbf{0.20\text{m}}$ (`20cm`). Consequently, the drone drifted out to `sx = +0.212m` (line 216), then hung stuck at `sx = -0.162m to -0.178m` for 2.2s (lines 260–320) and `sy = -0.203m` for 1.5s (lines 325–350) because `Kp = 0.65` only commanded `10–14 PWM` at `16–20cm` error.
+  3. **Root Cause 2 — Optical Flow Rotational Tilt-Coupling Spikes via `d_alpha = 0.6` and Unconstrained Attitude Steps:**
+     - Whenever `Roll` or `Pitch` stepped abruptly, the angular rotation of the drone caused apparent pixel motion on the downward PMW3901 camera. With `0.6 * new_derivative` and `Kd = 0.55`, 1-frame rotational artifacts triggered violent `±35 PWM` D-term kicks in the opposite direction:
+       - At lines 251–255 (`sx = -0.167m -> -0.120m`), `Roll` snapped from `1547 PWM` (`+4.7°` right) to `1489 PWM` (`-1.1°` left, *away* from center!) in `0.11s`, killing the return to `(0, 0)` and stranding the drone at `sx = -0.17m`.
+       - At lines 376–380 (`sy = +0.142m -> +0.117m -> +0.180m`), `Pitch` chattered `1474 -> 1511 -> 1503 -> 1472 -> 1450 PWM` across 4 frames (`0.13s`).
+  4. **Root Cause 3 — 60ms SPI Timeout Freezes in `_poll_flow_loop`:**
+     - `flow.get_motion(timeout=0.05)` plus `time.sleep(0.01)` stalled horizontal updates for `60–100ms` (2–3 frames at lines 216–218 and 259–261) and hard-zeroed `vel_x_norm`/`vel_y_norm` on timeout.
+- **Adjustments Made:**
+  - **Restored Bounded Integral Trim & Proportional Stiffness (`roll_pid`, `pitch_pid`):** Tuned to `Kp = 0.90, Ki = 0.25, Kd = 0.40, integral_limit = ±0.60`. Maximum integral trim is now $100 \times 0.25 \times 0.60 = \mathbf{\pm 15.0\text{ PWM}}$ (`±1.5°`), allowing the controller to learn and cancel battery CG / trim offsets within `~2–3s` without windup circles, while `Kp = 0.90` (`9 PWM` per `10cm`) arrests initial drift within `5–10cm` and `Kd = 0.40` ($K_d / K_p = 0.44$) damps return velocity without stalling `15cm` short of origin.
+  - **Added Derivative Low-Pass Filter Parameter (`d_alpha = 0.25` for Roll/Pitch):** Added `d_alpha` to [`PIDController`](file:///home/rodion/projects/drone-control-center/services/drone-inference/pid_controller.py) (default `0.6` for `throttle_pid`, `0.25` for `roll_pid`/`pitch_pid`), attenuating single-frame optical-flow rotational spikes by `2.4x`.
+  - **Added Roll/Pitch Command Slew Limiter (`max_rp_slew_rate = 180.0 PWM/s`):** Capped Roll/Pitch command rate of change in [`FlightController`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py) to `180 PWM/s` (`18°/s` $\approx 6\text{ PWM}$ per `33ms` frame), preventing `30–60 PWM` single-frame attitude snaps that corrupt the downward optical flow sensor while still reaching a `20 PWM` (`2°`) corrective tilt in `0.11s`.
+  - **Reduced Optical Flow Timeout to `25ms` with Smooth Velocity Decay (`sensor_real.py`):** Lowered `flow.get_motion(timeout=0.025)` and decayed `vel_x_norm`/`vel_y_norm` by `1 - ALPHA_VEL` on timeout instead of hard-zeroing or sleeping an extra 10ms.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.

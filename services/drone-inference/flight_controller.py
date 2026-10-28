@@ -7,10 +7,12 @@ class FlightController:
         # Confined-space tuning paired with Betaflight vbat_sag_compensation:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
         # Integral trim (+165 PWM headroom -> 1700 PWM ceiling) briskly elevates throttle for sagged batteries.
-        self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.2, integral_min=-0.35)
-        # Overdamped horizontal PIDs (Kd/Kp ≈ 0.85, minimal Ki) prevent circular/toilet-bowl overshoot
-        self.roll_pid = PIDController(Kp=0.65, Ki=0.02, Kd=0.55, integral_limit=0.15, integral_min=-0.15)
-        self.pitch_pid = PIDController(Kp=0.65, Ki=0.02, Kd=0.55, integral_limit=0.15, integral_min=-0.15)
+        self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.2, integral_min=-0.35, d_alpha=0.6)
+        # Horizontal PIDs: Kp=0.90 arrests drift within 5-10cm; Ki=0.25 with integral_limit=±0.60 provides up to ±15 PWM
+        # (±1.5 deg) steady-state trim authority to cancel battery CG / trim offset; Kd=0.40 with heavy derivative smoothing
+        # (d_alpha=0.25) damps translational velocity while rejecting 1-frame optical-flow rotational tilt spikes.
+        self.roll_pid = PIDController(Kp=0.90, Ki=0.25, Kd=0.40, integral_limit=0.60, integral_min=-0.60, d_alpha=0.25)
+        self.pitch_pid = PIDController(Kp=0.90, Ki=0.25, Kd=0.40, integral_limit=0.60, integral_min=-0.60, d_alpha=0.25)
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535
@@ -26,6 +28,7 @@ class FlightController:
         self.fc_max_angle_deg = 50.0
         self.max_indoor_tilt_deg = 5.0
         self.max_rp_correction = (self.max_indoor_tilt_deg / self.fc_max_angle_deg) * 500.0
+        self.max_rp_slew_rate = 180.0  # Max 180 PWM/s (18 deg/s -> ~6 PWM per 33ms frame) to prevent attitude-snap flow spikes
         self.max_yaw_correction = 50.0
         
         # Ground threshold for throttle integral: 0.018m (below resting ~0.021-0.030m ToF reading)
@@ -41,6 +44,8 @@ class FlightController:
         self.ref_alt_norm = None
         self.ref_shift_x_norm = None
         self.ref_shift_y_norm = None
+        self.last_roll_correction = 0.0
+        self.last_pitch_correction = 0.0
         
         self.reset()
 
@@ -53,6 +58,8 @@ class FlightController:
         self.ref_alt_norm = None
         self.ref_shift_x_norm = None
         self.ref_shift_y_norm = None
+        self.last_roll_correction = 0.0
+        self.last_pitch_correction = 0.0
     
     def compute_rc_commands(self, high_level_action: np.ndarray, current_state: np.ndarray, dt: float) -> np.ndarray:
         # high_level_action: [desired_shift_z, desired_shift_x, desired_shift_y, desired_yaw_norm] in [-1, 1]
@@ -120,13 +127,19 @@ class FlightController:
         yaw_pid_out = self.yaw_pid.compute(current_yaw_norm, dt, enable_integral=is_xy_airborne)
 
         if is_xy_airborne:
-            roll_correction = np.clip(100.0 * roll_pid_out, -self.max_rp_correction, self.max_rp_correction)
-            pitch_correction = np.clip(100.0 * pitch_pid_out, -self.max_rp_correction, self.max_rp_correction)
+            target_roll_corr = float(np.clip(100.0 * roll_pid_out, -self.max_rp_correction, self.max_rp_correction))
+            target_pitch_corr = float(np.clip(100.0 * pitch_pid_out, -self.max_rp_correction, self.max_rp_correction))
+            max_rp_step = self.max_rp_slew_rate * clamped_dt
+            roll_correction = self.last_roll_correction + float(np.clip(target_roll_corr - self.last_roll_correction, -max_rp_step, max_rp_step))
+            pitch_correction = self.last_pitch_correction + float(np.clip(target_pitch_corr - self.last_pitch_correction, -max_rp_step, max_rp_step))
             yaw_correction = np.clip(100.0 * yaw_pid_out, -self.max_yaw_correction, self.max_yaw_correction)
         else:
             roll_correction = 0.0
             pitch_correction = 0.0
             yaw_correction = 0.0
+
+        self.last_roll_correction = roll_correction
+        self.last_pitch_correction = pitch_correction
 
         rc_roll = 1500.0 + roll_correction
         rc_pitch = 1500.0 + pitch_correction
