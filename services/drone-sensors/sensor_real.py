@@ -53,6 +53,9 @@ class SensorReal:
         self.MAX_XY_SHIFT = MAX_XY_SHIFT # From strategic_agent
         self.MAX_ALTITUDE = 3.0
         self.MAX_FRONT_DISTANCE = 3.0
+        self.NOMINAL_FLOW_DT = 0.035      # Nominal ~28.5 Hz PMW3901 frame interval for multi-frame stall normalization
+        self.MAX_FRAME_SHIFT_M = 0.030    # Max 3.0 cm single-frame displacement step to reject SPI/rotational spikes
+        self.MAX_PHYSICAL_VEL_MS = 0.60   # Max 0.60 m/s physical indoor speed clamp before normalization
         
         # Deadbands and Smoothing
         self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
@@ -173,60 +176,72 @@ class SensorReal:
         warmup_end = time.time() + 5.0
 
         while not self.stop_thread:
-            current_time = time.time()
-            dt = current_time - self.last_time
-            self.last_time = current_time
-
             if self.flow:
                 try:
                     motion = self.flow.get_motion(timeout=0.025)
-                    if motion is not None and current_time > warmup_end:
-                        dx, dy = motion
-                        
-                        # 3a. Low Pass Filter raw motion
-                        self.filtered_dx = (self.ALPHA_FLOW * dx) + (1.0 - self.ALPHA_FLOW) * self.filtered_dx
-                        self.filtered_dy = (self.ALPHA_FLOW * dy) + (1.0 - self.ALPHA_FLOW) * self.filtered_dy
+                    current_time = time.time()
+                    if motion is not None:
+                        dt = max(0.010, current_time - self.last_time)
+                        self.last_time = current_time
+                        if current_time > warmup_end:
+                            dx, dy = motion
+                            # If OS/SPI stalled across multiple frames (dt > 0.10s), normalize raw hardware-accumulated
+                            # pixel counts to a nominal single-frame equivalent before the IIR filter so a stall burst
+                            # does not contaminate self.filtered_dx on subsequent short-dt frames.
+                            stall_scale = (self.NOMINAL_FLOW_DT / dt) if dt > 0.10 else 1.0
+                            dx_frame = dx * stall_scale
+                            dy_frame = dy * stall_scale
 
-                        # 3b. Apply Deadbands to filtered motion
-                        f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND else 0.0
-                        f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND else 0.0
+                            # 3a. Low Pass Filter per-frame motion
+                            self.filtered_dx = (self.ALPHA_FLOW * dx_frame) + (1.0 - self.ALPHA_FLOW) * self.filtered_dx
+                            self.filtered_dy = (self.ALPHA_FLOW * dy_frame) + (1.0 - self.ALPHA_FLOW) * self.filtered_dy
 
-                        with self.lock:
-                            cur_alt = self.altitude
+                            # 3b. Apply Deadbands to filtered motion
+                            f_dx = self.filtered_dx if abs(self.filtered_dx) > self.FLOW_DEADBAND else 0.0
+                            f_dy = self.filtered_dy if abs(self.filtered_dy) > self.FLOW_DEADBAND else 0.0
 
-                        integration_alt = max(0.02, cur_alt)
-
-                        if integration_alt >= self.GROUND_ALT_THRESHOLD: 
-                            # distance in meters = counts * alt * (2*tan(FOV/2)/RES)
-                            d_shift_x_m = f_dx * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
-                            d_shift_y_m = f_dy * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER
-                            
                             with self.lock:
-                                # Store in METERS
-                                self.shift_x += d_shift_x_m
-                                self.shift_y += d_shift_y_m
-                                
-                                # Hard Clamp shift in meters to [-MAX_XY_SHIFT, MAX_XY_SHIFT]
-                                self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
-                                self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
-                                
-                                if dt > 0:
-                                    # Velocity normalized to MAX_VELOCITY
-                                    raw_vx = max(-1.0, min(1.0, (d_shift_x_m / dt) / self.MAX_VELOCITY))
-                                    raw_vy = max(-1.0, min(1.0, (d_shift_y_m / dt) / self.MAX_VELOCITY))
-                                    self.vel_x_norm = (self.ALPHA_VEL * raw_vx) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
-                                    self.vel_y_norm = (self.ALPHA_VEL * raw_vy) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
-                        else:
-                            with self.lock:
-                                self.vel_x_norm = 0.0
-                                self.vel_y_norm = 0.0
-                                self.filtered_dx = 0.0
-                                self.filtered_dy = 0.0
-                                if cur_alt < self.GROUND_ALT_THRESHOLD:
-                                    self.shift_x = 0.0
-                                    self.shift_y = 0.0
+                                cur_alt = self.altitude
+
+                            integration_alt = max(0.02, cur_alt)
+
+                            if integration_alt >= self.GROUND_ALT_THRESHOLD:
+                                # distance in meters = counts * alt * (2*tan(FOV/2)/RES)
+                                frame_step_x = max(-self.MAX_FRAME_SHIFT_M, min(self.MAX_FRAME_SHIFT_M, f_dx * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER))
+                                frame_step_y = max(-self.MAX_FRAME_SHIFT_M, min(self.MAX_FRAME_SHIFT_M, f_dy * integration_alt * self.FLOW_METERS_PER_PIXEL_PER_METER))
+                                d_shift_x_m = frame_step_x / stall_scale if stall_scale < 1.0 else frame_step_x
+                                d_shift_y_m = frame_step_y / stall_scale if stall_scale < 1.0 else frame_step_y
+                                eff_dt = self.NOMINAL_FLOW_DT if stall_scale < 1.0 else dt
+
+                                with self.lock:
+                                    # Store in METERS
+                                    self.shift_x += d_shift_x_m
+                                    self.shift_y += d_shift_y_m
+
+                                    # Hard Clamp shift in meters to [-MAX_XY_SHIFT, MAX_XY_SHIFT]
+                                    self.shift_x = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_x))
+                                    self.shift_y = max(-self.MAX_XY_SHIFT, min(self.MAX_XY_SHIFT, self.shift_y))
+
+                                    if eff_dt > 0:
+                                        # Clamp physical velocity to [-MAX_PHYSICAL_VEL_MS, MAX_PHYSICAL_VEL_MS] before normalizing
+                                        vx_ms = max(-self.MAX_PHYSICAL_VEL_MS, min(self.MAX_PHYSICAL_VEL_MS, frame_step_x / eff_dt))
+                                        vy_ms = max(-self.MAX_PHYSICAL_VEL_MS, min(self.MAX_PHYSICAL_VEL_MS, frame_step_y / eff_dt))
+                                        raw_vx = max(-1.0, min(1.0, vx_ms / self.MAX_VELOCITY))
+                                        raw_vy = max(-1.0, min(1.0, vy_ms / self.MAX_VELOCITY))
+                                        self.vel_x_norm = (self.ALPHA_VEL * raw_vx) + ((1.0 - self.ALPHA_VEL) * self.vel_x_norm)
+                                        self.vel_y_norm = (self.ALPHA_VEL * raw_vy) + ((1.0 - self.ALPHA_VEL) * self.vel_y_norm)
+                            else:
+                                with self.lock:
+                                    self.vel_x_norm = 0.0
+                                    self.vel_y_norm = 0.0
+                                    self.filtered_dx = 0.0
+                                    self.filtered_dy = 0.0
+                                    if cur_alt < self.GROUND_ALT_THRESHOLD:
+                                        self.shift_x = 0.0
+                                        self.shift_y = 0.0
                     time.sleep(0.01)
                 except (RuntimeError, Exception):
+                    self.last_time = time.time()
                     with self.lock:
                         self.vel_x_norm *= (1.0 - self.ALPHA_VEL)
                         self.vel_y_norm *= (1.0 - self.ALPHA_VEL)

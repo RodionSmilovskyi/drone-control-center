@@ -11,31 +11,32 @@ class FlightController:
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
         
         # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
-        # Outer loop maps position error to desired velocity (kp_pos=0.45, clamped to max_velocity = 0.07 m/s).
-        # Inner loop maps velocity error to corrective tilt PWM via PID (Kp=1.00, Ki=0.22, Kd=0.08).
-        # Static pull at v=0 reaches 7.0 PWM (+8.8 PWM integral) to prevent barrier stalls, while Kp=1.00
-        # provides 100 PWM/(m/s) braking and Kd=0.08 (tau_d=80ms) avoids SPI quantization chatter and brake cancellation.
+        # Outer loop maps position error to desired velocity (kp_pos=0.45, clamped to max_velocity = 0.08 m/s).
+        # Inner loop maps velocity error to corrective tilt PWM via PID (Kp=0.72, Ki=1.10, Kd=0.16).
+        # Kp=0.72 stays well below the Nyquist ultimate gain (Ku=1.30) while Kd=0.16 (tau_d=222ms, d_alpha=0.32)
+        # provides phase lead to damp turnaround acceleration and level wings before crossing origin.
+        # Ki=1.10 (limit +/-0.15 -> +/-16.5 PWM) learns hover trim (-10.5 PWM) within ~1.5s and overcomes wall Coanda suction.
         self.roll_controller = CascadedAxisController(
             kp_pos=0.45,
-            max_velocity=0.07,
-            kp_vel=1.00,
-            ki_vel=0.22,
-            kd_vel=0.08,
-            integral_limit=0.40,
-            integral_min=-0.40,
-            d_alpha=0.25,
-            max_integral_vel_error=0.07,
+            max_velocity=0.08,
+            kp_vel=0.72,
+            ki_vel=1.10,
+            kd_vel=0.16,
+            integral_limit=0.15,
+            integral_min=-0.15,
+            d_alpha=0.32,
+            max_integral_vel_error=0.08,
         )
         self.pitch_controller = CascadedAxisController(
             kp_pos=0.45,
-            max_velocity=0.07,
-            kp_vel=1.00,
-            ki_vel=0.22,
-            kd_vel=0.08,
-            integral_limit=0.40,
-            integral_min=-0.40,
-            d_alpha=0.25,
-            max_integral_vel_error=0.07,
+            max_velocity=0.08,
+            kp_vel=0.72,
+            ki_vel=1.10,
+            kd_vel=0.16,
+            integral_limit=0.15,
+            integral_min=-0.15,
+            d_alpha=0.32,
+            max_integral_vel_error=0.08,
         )
         # Backwards-compatible aliases to inner velocity PIDController objects
         self.roll_pid = self.roll_controller.vel_pid
