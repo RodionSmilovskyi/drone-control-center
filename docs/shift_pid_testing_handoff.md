@@ -83,9 +83,9 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.20]` | `1535` | `[-150, +165]` | `[1385, 1700]` | Slew 0.35 m/s; integral active >= 0.018m |
-| **Roll (X)** | `self.roll_pid` | `0.48` | `0.08` | `0.35` | `[-0.80, +0.80]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.35`, slew `350 PWM/s`; locked to `1500` < `0.050m` |
-| **Pitch (Y)** | `self.pitch_pid` | `0.48` | `0.08` | `0.35` | `[-0.80, +0.80]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.35`, slew `350 PWM/s`; locked to `1500` < `0.050m` |
+| **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.35]` | `1535` | `[-150, +185]` | `[1385, 1720]` | Slew 0.35 m/s; integral active >= 0.018m |
+| **Roll (X)** | `self.roll_pid` | `0.75` | `0.35` | `0.85` | `[-0.50, +0.50]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.35, anti_windup_return=True`, slew `350 PWM/s` |
+| **Pitch (Y)** | `self.pitch_pid` | `0.75` | `0.35` | `0.85` | `[-0.50, +0.50]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | `d_alpha=0.35, anti_windup_return=True`, slew `350 PWM/s` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -168,6 +168,16 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
    - **Oscillation / Over-correction:** Reduce `Kp` (e.g. `0.5 -> 0.3`) or increase `Kd` (`0.3 -> 0.45`), or reduce `max_indoor_tilt_deg` (`5.0 -> 3.0`).
    - **Too weak to arrest drift:** Increase `Kp` (`0.5 -> 0.8`) or `max_indoor_tilt_deg` (`5.0 -> 7.0`) incrementally (never exceed `8.0°` indoors).
    - **Optical flow pitch/roll coupling:** Tilting the drone causes apparent pixel motion on the uncompensated PMW3901 sensor. Keep `Kd` moderate and `max_indoor_tilt_deg` small (`<= 5.0°`) to avoid optical-flow-to-tilt oscillation loops.
+
+> [!IMPORTANT]
+> **MANDATORY NEXT ARCHITECTURAL STEP — Switch to Commercial-Grade Cascaded Position $\rightarrow$ Velocity Control:**
+> Do **NOT** spend further iterations tuning the current single-loop horizontal position PID (`position_error -> tilt_angle`). Because horizontal tilt controls acceleration ($\ddot{x} = g\sin\theta$, a double integrator $1/s^2$ with $-180^\circ$ phase lag) on top of uncompensated optical flow, single-loop position PIDs are inherently prone to either cross-cage velocity overshoot or wall-gluing.
+>
+> Instead of any further single-loop gain tuning, refactor horizontal control in [`FlightController`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py) to a **2-stage Cascaded Architecture (PX4 / ArduPilot / iNAV style)**:
+> 1. **Outer Position Loop (P-Controller with Hard Velocity Clamp):**
+>    - Maps position error $(x_{\text{target}} - x)$ to a desired horizontal velocity $v_{\text{target}} = \text{clip}(K_{p,\text{pos}} \cdot e_x,\ -v_{\max},\ +v_{\max})$, strictly capping indoor approach speed (e.g., $v_{\max} \approx 0.10\text{–}0.12\text{ m/s}$).
+> 2. **Inner Velocity Loop (PI/PID-Controller):**
+>    - Maps velocity error $(v_{\text{target}} - v_{\text{measured}})$ using optical flow velocity (`obs[4]` / `obs[5]`) to Roll/Pitch tilt angle PWM. Because `tilt_angle -> velocity` is a 1st-order plant ($1/s$, $-90^\circ$ phase lag), it damps velocity directly, eliminates cross-cage sprints, and naturally learns steady-state trim (`~1490 PWM` Roll) whenever $v_{\text{measured}} \neq v_{\text{target}}$.
 
 ---
 
@@ -409,3 +419,58 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
     - `Ki = 0.08` (`±6.4 PWM` max) gently trims out the `~4–6 PWM` hover bias without winding up during swings.
   - **Increased `max_rp_slew_rate` to `350.0 PWM/s` and Set `ALPHA_FLOW = 0.35` (`sensor_real.py`):** Eliminates slew-unwind phase lag at turnaround and smooths optical flow pixel bursts.
 - **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+
+### Entry 14 — Resolving Safety-Barrier Collision & Wall-Gluing via `Kd > Kp` Return Braking and Anti-Windup Unsticking (2026-10-27)
+- **Files Modified:**
+  - [`services/drone-inference/pid_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/pid_controller.py)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry & Physical Observations (`logs/inference.log`, flight lines 100–453, 11.85s AI flight):**
+  1. **Critical Physical Insight — "Motionless" Telemetry (`t = 6.3s -> 11.85s`) Was Actually the Drone Glued to the Right/Back Safety Barrier:**
+     - From `t = 4.9s` to `t = 6.3s` (lines 248–288), the drone accelerated from `shift_x = -0.270m, shift_y = +0.142m` (`front_dist = 0.158m`) all the way across the cage (`+35.2cm` right, `-30.1cm` backward, `front_dist -> 0.542m`), reaching **`+56 cm/s` right (`vel_x = +0.112`) and `-38 cm/s` back (`vel_y = -0.076`)** at line 286 before colliding with the right/back safety barrier at `t = 6.3s` (`shift_x = +0.082m, shift_y = -0.159m`).
+     - From `t = 6.3s` to `t = 11.85s` (lines 288–453), the barrier physically blocked further motion (`vel_x ≈ 0, vel_y ≈ 0`, `shift_x` frozen at `+0.092m`, `shift_y` at `-0.062m`, `front_dist` at `0.388m`), so the drone stayed **glued against the safety barrier** for 5.5 seconds until manual disarm!
+  2. **Root Cause 1 — Why the Drone Accelerated to `56 cm/s` Into the Barrier (`Kd < Kp` + Trim Offset):**
+     - Across all flights today, the physical airframe's neutral level Roll hover trim is **`Roll ≈ 1490 PWM` (`-10 PWM`)**. Any Roll command above `1490 PWM` physically accelerates the drone to the right (`+X`).
+     - During the return from `shift_x = -0.270m` (`t = 5.0s`, line 248), because $K_d = 0.35 < K_p = 0.48$ and `roll_pid.integral` had wound up positive during the `-0.270m` excursion, `Roll` stayed above `1490 PWM` (`1514 -> 1490 PWM`) all the way from `x = -0.270m` to `x = -0.050m` (line 279, `22cm` of continuous rightward acceleration!), accelerating the drone to `48–56 cm/s` before applying a single degree of leftward braking!
+  3. **Root Cause 2 — Why the Drone Stayed Glued to the Barrier (`Roll = 1494 PWM, Pitch = 1503 PWM`):**
+     - Once against the right/back barrier at `shift_x = +0.092m, shift_y = -0.062m` (`vel_x = 0`), `P` was only `100 * 0.48 * (-0.092) = -4.4 PWM`, and `Ki = 0.08` spent 4 seconds just unwinding the positive integral from the earlier `-0.270m` excursion (`-0.73 PWM/s`).
+     - As a result, `Roll` sat at **`1494–1495 PWM`** — which is **still `+4 to +5 PWM` tilted to the RIGHT relative to the `1490 PWM` level trim** — continuously pressing the drone into the safety barrier while `Throttle` roared at `1700 PWM`!
+- **Adjustments Made:**
+  - **Added Return-Velocity & Zero-Crossing Anti-Windup (`anti_windup_return=True`) in [`PIDController`](file:///home/rodion/projects/drone-control-center/services/drone-inference/pid_controller.py):**
+    - **Crossed Setpoint (`integral * error < 0`):** Unwinds opposing integral **3.5x faster** (`3.5 * error * dt`) so windup from one side of the cage never pushes the drone into the opposite barrier.
+    - **Moving Toward Setpoint (`error * derivative < 0` and `|v| > 8 cm/s`):** Pauses integral accumulation (gently bleeds `10%/s`) as soon as the drone is already returning toward `(0, 0)` faster than `8 cm/s`, preventing overshoot windup while preserving the learned hover trim.
+    - **Drifting Away or Stalled Against Barrier (`|v| <= 8 cm/s`):** Integrates at full `Ki = 0.35` rate to rapidly overcome trim bias and wall suction.
+  - **Tuned Horizontal PIDs to Velocity-Dominated Braking (`Kp = 0.75, Ki = 0.35, Kd = 0.85, integral_limit = ±0.50 -> ±17.5 PWM max trim, d_alpha = 0.35`):**
+    - **`Kd > Kp` ($K_d / K_p = 1.13\text{ s}$):** Caps return approach velocity to $\le 12–15\text{ cm/s}$ by reversing into a braking tilt as soon as return speed exceeds $0.88 |x|$, preventing cross-cage sprints into the barrier.
+    - **Strong Unsticking Authority (`P + I`):** If stalled against a barrier at `9.2cm` (`v = 0`), `P` (`-6.9 PWM`) + `I` (`-3.2 PWM/s` up to `-17.5 PWM`) rapidly reaches **`-24.4 PWM` (`Roll = 1476 PWM`, `-14 PWM` past level trim)** to peel the drone off the barrier within `< 1s`, then immediately brakes via `Kd = 0.85` as soon as it moves away from the wall.
+  - **Expanded Climb Throttle Headroom (`max_climb_correction = 185.0 -> 1720 PWM ceiling`, `throttle_pid.integral_limit = 1.35`):**
+    - Prevents `throttle_pid` from saturating at `1700 PWM` (`0.29m`) as the battery drains.
+- **Validation Status:** Local unit tests passed (`12/12 OK`). Ready for Raspberry Pi verification.
+- **Next Step Directive:** If single-loop horizontal stabilization in Entry 14 is still not satisfactory, **stop tuning the single-loop position PID** and immediately transition to the **commercial-grade Cascaded Position (P) $\rightarrow$ Velocity (PI/PID) architecture** documented in Section 4 above.
+
+### Entry 15 — Implementation of Cascaded Position (P) $\rightarrow$ Velocity (PI/PID) Architecture (2026-10-28)
+- **Files Modified:**
+  - [`services/drone-inference/cascaded_pid.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/cascaded_pid.py) (NEW)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-inference/inference.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/inference.py)
+  - [`dashboard.py`](file:///home/rodion/projects/drone-control-center/dashboard.py)
+  - [`tests/test_inference_altitude.py`](file:///home/rodion/projects/drone-control-center/tests/test_inference_altitude.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Motivation & Theoretical Basis:**
+  - Single-loop horizontal position PID (`position_error -> tilt_angle`) is inherently limited because horizontal tilt controls acceleration ($\ddot{x} = g\sin\theta$, a double integrator $1/s^2$ with $-180^\circ$ phase lag). This required brittle ad-hoc anti-windup heuristics to prevent either cross-cage sprints or wall-gluing.
+  - Furthermore, future phases require the drone not just to maintain hover, but to autonomously translate to arbitrary 3D spatial shifts (e.g. $+0.1z, +0.3x, -0.1y$) and hold steady. Single-loop controllers subjected to a $+0.30\text{m}$ step command command excessive tilt and sprint into boundaries.
+  - Cascaded control splits horizontal control into two robust stages (PX4 / ArduPilot / iNAV style):
+    1. **Outer Loop (Position P with Hard Velocity Clamp):**
+       Maps position error $(x_{\text{target}} - x)$ to target velocity $v_{\text{target}} = \text{clip}(K_{p,\text{pos}} \cdot e_x, -v_{\max}, +v_{\max})$.
+       With $v_{\max} = 0.12\text{ m/s}$ and $K_{p,\text{pos}} = 1.0\text{ s}^{-1}$, the approach speed is strictly bounded, smoothly leading the drone to any waypoint shift without runaway acceleration.
+    2. **Inner Loop (Velocity PI/PID):**
+       Maps velocity error $(v_{\text{target}} - v_{\text{measured}})$ using optical flow velocity (`obs[4]` / `obs[5]` scaled by `MAX_VELOCITY = 5.0 m/s`) to tilt correction PWM. Because `tilt_angle -> velocity` is a 1st-order plant ($1/s$, $-90^\circ$ phase lag), it damps velocity directly, applies pre-emptive braking whenever return speed exceeds $v_{\text{target}}$, and eliminates position integral windup.
+- **Architectural Simplifications & Parameters:**
+  - Replaced brittle ad-hoc `anti_windup_return` heuristics with clean standard bounded velocity integration.
+  - **Outer Loop:** $K_{p,\text{pos}} = 1.0\text{ s}^{-1}$, $v_{\max} = 0.12\text{ m/s}$.
+  - **Inner Loop:** $K_{p,\text{vel}} = 1.5$, $K_{i,\text{vel}} = 0.8$, $K_{d,\text{vel}} = 0.05$, `integral_limit = ±0.25` ($\pm 20\text{ PWM}$ max trim), `d_alpha = 0.35`.
+  - **Safety Guards Preserved:** Max indoor tilt limit `±5.0°` (`±50 PWM`), command slew rate limiter `350 PWM/s`, ground gate neutral hold (`1500 PWM`) below `0.050m`.
+  - **Dashboard Controls Added:** Keyboard keys `i`/`k` (Pitch shift $\pm 5\text{cm}$) and `j`/`l` (Roll shift $\pm 5\text{cm}$) added to [`dashboard.py`](file:///home/rodion/projects/drone-control-center/dashboard.py) alongside existing `w`/`s` (Altitude $\pm 5\text{cm}$).
+- **Validation Status:** All 17 automated unit tests passed (`17/17 OK`). Ready for hardware-in-the-loop validation on the physical Raspberry Pi Zero 2 W.

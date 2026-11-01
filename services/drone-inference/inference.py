@@ -18,6 +18,7 @@ from flight_controller import FlightController
 shutting_down = False
 MAX_ALTITUDE = 3.0  # Max altitude in meters, aligned with sensor_real.py
 MAX_XY_SHIFT = 1.0  # Max horizontal shift in meters, aligned with sensor_real.py
+MAX_VELOCITY = 5.0  # Max horizontal velocity in m/s, aligned with sensor_real.py
 DEFAULT_SHIFT_Z = round(0.4 / MAX_ALTITUDE, 4)
 DEFAULT_SHIFT_X = 0.0
 DEFAULT_SHIFT_Y = 0.0
@@ -64,11 +65,14 @@ def handle_ai(
     # High-level action: [desired_shift_z, desired_shift_x, desired_shift_y, desired_yaw]
     high_level_action = np.array([shift_z, shift_x, shift_y, 0.0], dtype=np.float32)
     
-    # 2. Normalize current sensor altitude obs[0] to [0, 1] and horizontal shifts obs[2], obs[3] to [-1, 1]
+    # 2. Normalize current sensor altitude obs[0] to [0, 1], horizontal shifts obs[2], obs[3] to [-1, 1],
+    # and convert normalized velocities obs[4], obs[5] to physical m/s for cascaded velocity loop
     current_alt_norm = float(np.clip(obs[0] / MAX_ALTITUDE, 0.0, 1.0))
     current_shift_x_norm = float(np.clip(obs[2] / MAX_XY_SHIFT, -1.0, 1.0))
     current_shift_y_norm = float(np.clip(obs[3] / MAX_XY_SHIFT, -1.0, 1.0))
-    current_state = np.array([current_alt_norm, current_shift_x_norm, current_shift_y_norm, 0.0], dtype=np.float32)
+    current_vel_x = float(np.clip(obs[4], -1.0, 1.0) * MAX_VELOCITY) if len(obs) > 4 else 0.0
+    current_vel_y = float(np.clip(obs[5], -1.0, 1.0) * MAX_VELOCITY) if len(obs) > 5 else 0.0
+    current_state = np.array([current_alt_norm, current_shift_x_norm, current_shift_y_norm, 0.0, current_vel_x, current_vel_y], dtype=np.float32)
     
     # 3. Compute low-level RC commands (4 channels: throttle, roll, pitch, yaw)
     low_level_rc = fc.compute_rc_commands(high_level_action, current_state, dt=dt)
@@ -76,7 +80,14 @@ def handle_ai(
     # reorder to [roll, pitch, throttle, yaw, aux1, aux2]
     rc_throttle, rc_roll, rc_pitch, rc_yaw = low_level_rc.tolist()
     
-    return [int(rc_roll), int(rc_pitch), int(rc_throttle), int(rc_yaw), 1800, 1800]
+    return [
+        int(round(rc_roll)),
+        int(round(rc_pitch)),
+        int(round(rc_throttle)),
+        int(round(rc_yaw)),
+        1800,
+        1800,
+    ]
 
 def main():
     global shutting_down

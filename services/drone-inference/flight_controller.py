@@ -1,5 +1,6 @@
 import numpy as np
 from pid_controller import PIDController
+from cascaded_pid import CascadedAxisController
 
 class FlightController:
     """Low-level controller translating high-level actions to RC commands."""
@@ -8,11 +9,34 @@ class FlightController:
         # Hover baseline 1535 PWM ensures prompt, gentle unweighting (~1570 PWM at t=0.6s) without catapulting.
         # Integral trim (+185 PWM headroom -> 1720 PWM ceiling) briskly elevates throttle for sagged batteries.
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
-        # Horizontal PIDs: Overdamped velocity-braking gains (Kp=0.75, Ki=0.35, Kd=0.85, integral_limit=±0.50 -> ±17.5 PWM max trim,
-        # d_alpha=0.35, anti_windup_return=True). Kd > Kp caps return velocity to ~10-15 cm/s so the drone never accelerates into
-        # the opposite barrier, while Ki=0.35 + anti_windup_return rapidly unsticks the drone if stalled against a barrier.
-        self.roll_pid = PIDController(Kp=0.75, Ki=0.35, Kd=0.85, integral_limit=0.50, integral_min=-0.50, d_alpha=0.35, anti_windup_return=True)
-        self.pitch_pid = PIDController(Kp=0.75, Ki=0.35, Kd=0.85, integral_limit=0.50, integral_min=-0.50, d_alpha=0.35, anti_windup_return=True)
+        
+        # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
+        # Outer loop maps position error to desired velocity (clamped to max_velocity = 0.12 m/s).
+        # Inner loop maps velocity error to corrective tilt PWM via PI/PID (Kp=1.5, Ki=0.8, Kd=0.05).
+        # Inner integral trims steady-state hover bias (~1490 PWM Roll) without winding up during position swings or waypoint shifts.
+        self.roll_controller = CascadedAxisController(
+            kp_pos=1.0,
+            max_velocity=0.12,
+            kp_vel=1.5,
+            ki_vel=0.8,
+            kd_vel=0.05,
+            integral_limit=0.25,
+            integral_min=-0.25,
+            d_alpha=0.35,
+        )
+        self.pitch_controller = CascadedAxisController(
+            kp_pos=1.0,
+            max_velocity=0.12,
+            kp_vel=1.5,
+            ki_vel=0.8,
+            kd_vel=0.05,
+            integral_limit=0.25,
+            integral_min=-0.25,
+            d_alpha=0.35,
+        )
+        # Backwards-compatible aliases to inner velocity PIDController objects
+        self.roll_pid = self.roll_controller.vel_pid
+        self.pitch_pid = self.pitch_controller.vel_pid
         self.yaw_pid = PIDController(Kp=0.5, Ki=0.0, Kd=0.1, integral_limit=0.2, integral_min=-0.2)
         
         self.hover_throttle = 1535
@@ -51,8 +75,8 @@ class FlightController:
 
     def reset(self):
         self.throttle_pid.reset()
-        self.roll_pid.reset()
-        self.pitch_pid.reset()
+        self.roll_controller.reset()
+        self.pitch_controller.reset()
         self.yaw_pid.reset()
         self.current_setpoint_norm = None
         self.ref_alt_norm = None
@@ -63,17 +87,21 @@ class FlightController:
     
     def compute_rc_commands(self, high_level_action: np.ndarray, current_state: np.ndarray, dt: float) -> np.ndarray:
         # high_level_action: [desired_shift_z, desired_shift_x, desired_shift_y, desired_yaw_norm] in [-1, 1]
-        # current_state: [current_alt_norm, current_shift_x_norm, current_shift_y_norm, current_yaw_norm]
+        # current_state: [current_alt_norm, current_shift_x_norm, current_shift_y_norm, current_yaw_norm, current_vel_x, current_vel_y]
         if np.ndim(current_state) == 0:
             current_alt_norm = float(current_state)
             current_shift_x_norm = 0.0
             current_shift_y_norm = 0.0
             current_yaw_norm = 0.0
+            current_vel_x = 0.0
+            current_vel_y = 0.0
         else:
             current_alt_norm = float(current_state[0])
             current_shift_x_norm = float(current_state[1]) if len(current_state) > 1 else 0.0
             current_shift_y_norm = float(current_state[2]) if len(current_state) > 2 else 0.0
             current_yaw_norm = float(current_state[3]) if len(current_state) > 3 else 0.0
+            current_vel_x = float(current_state[4]) if len(current_state) > 4 else 0.0
+            current_vel_y = float(current_state[5]) if len(current_state) > 5 else 0.0
 
         desired_shift_z = float(np.clip(high_level_action[0], -1.0, 1.0))
         desired_shift_x = float(np.clip(high_level_action[1], -1.0, 1.0))
@@ -86,15 +114,17 @@ class FlightController:
         # Latch reference state when AI mode engages (first frame after reset)
         if self.ref_alt_norm is None:
             self.ref_alt_norm = current_alt_norm
-        if self.ref_shift_x_norm is None:
-            self.ref_shift_x_norm = current_shift_x_norm if is_xy_airborne else 0.0
-        if self.ref_shift_y_norm is None:
-            self.ref_shift_y_norm = current_shift_y_norm if is_xy_airborne else 0.0
+        if is_xy_airborne and self.ref_shift_x_norm is None:
+            self.ref_shift_x_norm = current_shift_x_norm
+        if is_xy_airborne and self.ref_shift_y_norm is None:
+            self.ref_shift_y_norm = current_shift_y_norm
 
-        # On the ground before takeoff (< 0.050m), horizontal origin is always zero
+        # On the ground before takeoff (< 0.050m), horizontal origin is zero and controllers reset
         if not is_xy_airborne:
             self.ref_shift_x_norm = 0.0
             self.ref_shift_y_norm = 0.0
+            self.roll_controller.reset()
+            self.pitch_controller.reset()
 
         desired_alt_norm = float(np.clip(self.ref_alt_norm + desired_shift_z, 0.0, 1.0))
         desired_x_norm = float(np.clip(self.ref_shift_x_norm + desired_shift_x, -1.0, 1.0))
@@ -110,23 +140,25 @@ class FlightController:
             self.current_setpoint_norm += float(np.clip(delta, -max_step, max_step))
 
         self.throttle_pid.setpoint = self.current_setpoint_norm
-        self.roll_pid.setpoint = desired_x_norm
-        self.pitch_pid.setpoint = desired_y_norm
         self.yaw_pid.setpoint = desired_yaw_norm
         
         # Allow throttle integral above 0.018m so the drone can ramp past 1601 PWM to break ground contact.
         throttle_pid_out = self.throttle_pid.compute(current_alt_norm, dt, enable_integral=is_throttle_active)
         
-        # Asymmetrical PID bounds: descent authority [-150], climb headroom [+165] (throttle up to 1700 PWM)
+        # Asymmetrical PID bounds: descent authority [-150], climb headroom [+185] (throttle up to 1700 PWM)
         pid_correction = np.clip(100.0 * throttle_pid_out, self.max_descent_correction, self.max_climb_correction)
         rc_throttle = self.hover_throttle + pid_correction
 
-        # Compute Roll, Pitch, and Yaw PIDs; keep neutral (1500 PWM) and integral disabled until > 0.050m
-        roll_pid_out = self.roll_pid.compute(current_shift_x_norm, dt, enable_integral=is_xy_airborne)
-        pitch_pid_out = self.pitch_pid.compute(current_shift_y_norm, dt, enable_integral=is_xy_airborne)
-        yaw_pid_out = self.yaw_pid.compute(current_yaw_norm, dt, enable_integral=is_xy_airborne)
-
+        # Compute Cascaded Roll and Pitch (Position P -> Velocity PI/PID) and Yaw PID
         if is_xy_airborne:
+            roll_pid_out = self.roll_controller.compute(
+                current_shift_x_norm, current_vel_x, dt, target_pos=desired_x_norm, enable_integral=True
+            )
+            pitch_pid_out = self.pitch_controller.compute(
+                current_shift_y_norm, current_vel_y, dt, target_pos=desired_y_norm, enable_integral=True
+            )
+            yaw_pid_out = self.yaw_pid.compute(current_yaw_norm, dt, enable_integral=True)
+
             target_roll_corr = float(np.clip(100.0 * roll_pid_out, -self.max_rp_correction, self.max_rp_correction))
             target_pitch_corr = float(np.clip(100.0 * pitch_pid_out, -self.max_rp_correction, self.max_rp_correction))
             max_rp_step = self.max_rp_slew_rate * clamped_dt

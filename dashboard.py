@@ -23,6 +23,7 @@ shutting_down = False
 current_mode = "disarmed"
 MAX_ALTITUDE = 3.0
 SHIFT_Z_STEP = round(0.05 / MAX_ALTITUDE, 3)  # ~0.017 (+5cm per step)
+SHIFT_XY_STEP = 0.05  # +0.05m (+5cm per step)
 desired_shift_z = round(0.4 / MAX_ALTITUDE, 3)  # +0.133 (+0.40m default vertical shift)
 desired_shift_x = 0.0
 desired_shift_y = 0.0
@@ -116,9 +117,10 @@ def get_mode_panel(
     mode_text = Text(f"{mode.upper()}", style=f"{color} underline")
     shift_z_text = Text(f"\nShift Z: {shift_z:+.3f} ({shift_z * MAX_ALTITUDE:+.2f}m)", style="bold cyan")
     shift_xy_text = Text(f"\nShift X/Y: {shift_x:+.2f}, {shift_y:+.2f}", style="cyan")
+    controls_hint = Text("\nw/s: Alt ±5cm | i/k: Pitch ±5cm | j/l: Roll ±5cm", style="dim")
     rc_summary = Text(f"\nRC: {rc_commands[:4]}", style="dim")
     
-    content = Text.assemble("\n", mode_text, "\n", shift_z_text, shift_xy_text, "\n", rc_summary)
+    content = Text.assemble("\n", mode_text, "\n", shift_z_text, shift_xy_text, "\n", controls_hint, "\n", rc_summary)
     
     return Panel(content, title="[bold]System Status[/bold]", border_style=color.split()[-1], title_align="center")
 
@@ -198,6 +200,22 @@ def keyboard_listener(pub_socket):
             elif char_lower == 's':
                 with mode_lock:
                     desired_shift_z = max(-1.0, round(desired_shift_z - SHIFT_Z_STEP, 3))
+                    publish_mode_cmd(pub_socket)
+            elif char_lower == 'i':
+                with mode_lock:
+                    desired_shift_y = min(1.0, round(desired_shift_y + SHIFT_XY_STEP, 2))
+                    publish_mode_cmd(pub_socket)
+            elif char_lower == 'k':
+                with mode_lock:
+                    desired_shift_y = max(-1.0, round(desired_shift_y - SHIFT_XY_STEP, 2))
+                    publish_mode_cmd(pub_socket)
+            elif char_lower == 'j':
+                with mode_lock:
+                    desired_shift_x = max(-1.0, round(desired_shift_x - SHIFT_XY_STEP, 2))
+                    publish_mode_cmd(pub_socket)
+            elif char_lower == 'l':
+                with mode_lock:
+                    desired_shift_x = min(1.0, round(desired_shift_x + SHIFT_XY_STEP, 2))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'q':
                 shutting_down = True

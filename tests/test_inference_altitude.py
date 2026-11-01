@@ -156,5 +156,91 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(rc[1], 1500)
         self.assertEqual(rc[3], 1500)
 
+    def test_cascaded_outer_loop_velocity_clamping(self):
+        # Verify outer loop clamps target velocity to +/- 0.12 m/s under large position steps
+        self.fc.reset()
+        obs = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        # Large positive X shift step (+0.50m)
+        handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.50, desired_shift_y=-0.50)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.12, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.12, places=4)
+
+    def test_cascaded_arbitrary_spatial_shift_waypoint(self):
+        # User requirement: move to +0.1z, +0.3x, -0.1y and stay there
+        self.fc.reset()
+        # Drone latches airborne at alt=0.30m, shift_x=0.0, shift_y=0.0
+        obs_start = np.array([0.30, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        shift_z = 0.10 / MAX_ALTITUDE
+        shift_x = 0.30 / MAX_XY_SHIFT
+        shift_y = -0.10 / MAX_XY_SHIFT
+        handle_ai(obs_start, self.fc, dt=0.033, desired_shift_z=shift_z, desired_shift_x=shift_x, desired_shift_y=shift_y)
+        
+        # Verify target setpoints
+        self.assertAlmostEqual(self.fc.ref_shift_x_norm, 0.0, places=4)
+        self.assertAlmostEqual(self.fc.ref_shift_y_norm, 0.0, places=4)
+        self.assertAlmostEqual(self.fc.roll_controller.target_position, 0.30, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_position, -0.10, places=4)
+
+        # In mid-flight when reaching the waypoint (+0.3x, -0.1y at 0.40m alt with 0 velocity):
+        obs_arrived = np.array([0.40, 1.5, 0.30, -0.10, 0.0, 0.0, 105.0], dtype=np.float64)
+        for _ in range(50):
+            rc = handle_ai(obs_arrived, self.fc, dt=0.033, desired_shift_z=shift_z, desired_shift_x=shift_x, desired_shift_y=shift_y)
+        
+        # At target waypoint at rest, target velocity is 0 and corrections remain neutral (1500)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.0, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, 0.0, places=4)
+        self.assertEqual(rc[0], 1500)  # Roll neutral
+        self.assertEqual(rc[1], 1500)  # Pitch neutral
+
+    def test_cascaded_inner_loop_return_braking(self):
+        # Verify that when returning toward origin faster than target approach velocity,
+        # the velocity loop reverses tilt to apply pre-emptive braking BEFORE crossing origin.
+        self.fc.reset()
+        obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        # Drone is at +0.10m (right of origin), returning toward 0 at vx = -0.25 m/s (normalized vx = -0.25 / 5.0 = -0.05).
+        # Position error is 0 - 0.10 = -0.10m -> outer loop target velocity is -0.10 m/s.
+        # But measured return velocity is -0.25 m/s, so velocity error is -0.10 - (-0.25) = +0.15 m/s > 0.
+        # Even though drone is to the right of origin (x = +0.10m), it must command Roll > 1500 (tilt right) to BRAKE!
+        obs_returning_fast = np.array([0.4, 1.5, 0.10, 0.0, -0.05, 0.0, 101.0], dtype=np.float64)
+        # Prime last_measurement for derivative
+        handle_ai(obs_returning_fast, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        rc = handle_ai(obs_returning_fast, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        roll = rc[0]
+        self.assertGreater(roll, 1500, "Should apply opposing braking tilt (Roll > 1500) when return speed exceeds target speed")
+
+    def test_cascaded_trim_integral_learning(self):
+        # Verify that steady-state velocity drift accumulates inner integral to learn trim offset
+        self.fc.reset()
+        obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        # Drift to right with vx = +0.04 m/s (normalized vx = +0.04 / 5.0 = 0.008) at target position 0.0
+        obs_drift = np.array([0.4, 1.5, 0.0, 0.0, 0.008, 0.0, 101.0], dtype=np.float64)
+        for _ in range(40):
+            handle_ai(obs_drift, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        
+        # Integral should be negative (learning leftward roll trim to oppose rightward drift)
+        self.assertLess(self.fc.roll_controller.vel_pid.integral, 0.0)
+        self.assertGreaterEqual(self.fc.roll_controller.vel_pid.integral, self.fc.roll_controller.vel_pid.integral_min)
+
+    def test_cascaded_reset_clears_controllers(self):
+        # Verify fc.reset() cleanly clears cascaded controllers
+        obs = np.array([0.4, 1.5, 0.2, -0.2, 0.02, -0.02, 100.0], dtype=np.float64)
+        for _ in range(10):
+            handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.1, desired_shift_x=0.2, desired_shift_y=-0.2)
+        
+        self.assertNotEqual(self.fc.roll_controller.position_error, 0.0)
+        self.fc.reset()
+        self.assertEqual(self.fc.roll_controller.target_position, 0.0)
+        self.assertEqual(self.fc.roll_controller.target_velocity, 0.0)
+        self.assertEqual(self.fc.roll_controller.position_error, 0.0)
+        self.assertEqual(self.fc.roll_controller.vel_pid.integral, 0.0)
+        self.assertEqual(self.fc.pitch_controller.target_position, 0.0)
+        self.assertEqual(self.fc.pitch_controller.target_velocity, 0.0)
+        self.assertEqual(self.fc.pitch_controller.position_error, 0.0)
+        self.assertEqual(self.fc.pitch_controller.vel_pid.integral, 0.0)
+
 if __name__ == "__main__":
     unittest.main()
