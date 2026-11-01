@@ -257,8 +257,11 @@ def main():
                 if not args.no_log and logger.isEnabledFor(logging.INFO):
                     logger.info(f"OBS: {obs.tolist()} | RC: {rc_commands}")
 
-                # 5. Publish RC commands
-            rc_pub.send_pyobj(rc_commands)
+                # 5. Publish RC commands (non-blocking)
+            try:
+                rc_pub.send_pyobj(rc_commands, flags=zmq.NOBLOCK)
+            except zmq.Again:
+                pass
 
             time.sleep(0.01)  # Poll at 100Hz
     except Exception as e:

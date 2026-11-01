@@ -157,33 +157,33 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(rc[3], 1500)
 
     def test_cascaded_outer_loop_velocity_clamping(self):
-        # Verify outer loop clamps target velocity to +/- max_velocity (0.05 m/s) under large position steps
+        # Verify outer loop clamps target velocity to +/- max_velocity (0.07 m/s) under large position steps
         self.fc.reset()
         obs = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         # Large positive X shift step (+0.50m)
         handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.50, desired_shift_y=-0.50)
-        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.05, places=4)
-        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.05, places=4)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.07, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.07, places=4)
 
     def test_cascaded_return_braking_anti_windup(self):
-        # Verify that when returning toward origin faster than target_velocity,
-        # the inner trim integral unwinds excess push toward 0 and NEVER winds up in the opposing (braking) direction.
+        # Verify that when returning toward origin, the inner trim integral unwinds any wall-unsticking push
+        # proportional to distance traveled toward 0 and NEVER winds up in the opposing (braking) direction.
         self.fc.reset()
         obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
 
-        # 1. Drone is stalled at x = +0.10m (vx = 0) -> accumulates negative integral to push left toward 0
-        obs_stalled = np.array([0.4, 1.5, 0.10, 0.0, 0.0, 0.0, 101.0], dtype=np.float64)
+        # 1. Drone is stalled at x = +0.16m (vx = 0) -> accumulates negative integral to push left toward 0
+        obs_stalled = np.array([0.4, 1.5, 0.16, 0.0, 0.0, 0.0, 101.0], dtype=np.float64)
         for _ in range(30):
             handle_ai(obs_stalled, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
-        self.assertLess(self.fc.roll_controller.vel_pid.integral, -0.03)
+        self.assertLess(self.fc.roll_controller.vel_pid.integral, -0.05)
 
-        # 2. Drone now returns toward 0 faster than target_velocity (x = +0.08m, vx = -0.35 m/s -> norm -0.07)
-        # Integral should unwind toward 0, and even over 40 frames of fast return braking, must NOT wind up positive (> 0.01)
+        # 2. Drone now returns toward 0 (x = +0.08m, vx = -0.35 m/s -> norm -0.07)
+        # Integral should unwind cleanly to 0, and even over 40 frames of fast return braking, must NOT wind up positive (> 0.01)
         obs_fast_return = np.array([0.4, 1.5, 0.08, 0.0, -0.07, 0.0, 102.0], dtype=np.float64)
         for _ in range(40):
             handle_ai(obs_fast_return, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
-        self.assertLessEqual(self.fc.roll_controller.vel_pid.integral, 0.01, "Must not wind up positive integral during fast return braking")
+        self.assertAlmostEqual(self.fc.roll_controller.vel_pid.integral, 0.0, places=4)
 
     def test_cascaded_arbitrary_spatial_shift_waypoint(self):
         # User requirement: move to +0.1z, +0.3x, -0.1y and stay there

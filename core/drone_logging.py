@@ -1,12 +1,32 @@
+import atexit
 import logging
+import queue
 import sys
 import os
-from logging.handlers import WatchedFileHandler
+from logging.handlers import WatchedFileHandler, QueueHandler, QueueListener
+
+
+class _NonBlockingQueueHandler(QueueHandler):
+    """QueueHandler that never blocks the real-time flight loop if the bounded log queue is full."""
+    def enqueue(self, record):
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            try:
+                self.queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self.queue.put_nowait(record)
+            except queue.Full:
+                pass
+
 
 def setup_logger(name, log_file, level=None):
     """
     Creates and configures a logger that writes to both a file
-    and the console (stdout).
+    and the console (stdout) asynchronously via a bounded QueueListener
+    so SD card writeback or stdout stalls never block the flight loop.
     If DRONE_QUIET environment variable is set to '1', level defaults to WARNING.
     """
     if level is None:
@@ -36,20 +56,24 @@ def setup_logger(name, log_file, level=None):
     else:
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-    # Create a file handler
-    file_handler = WatchedFileHandler(log_file)
-    file_handler.setLevel(level)
-    file_handler.setFormatter(formatter)
-
-    # Create a console handler (stdout)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_handler.setFormatter(formatter)
-
-    # Add handlers to the logger *only if* it doesn't have them
+    # Add non-blocking queue handler and background listener *only if* logger doesn't have handlers
     if not logger.hasHandlers():
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
+        file_handler = WatchedFileHandler(log_file)
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+
+        log_queue = queue.Queue(maxsize=512)
+        queue_handler = _NonBlockingQueueHandler(log_queue)
+        queue_handler.setLevel(level)
+        logger.addHandler(queue_handler)
+
+        listener = QueueListener(log_queue, file_handler, console_handler, respect_handler_level=True)
+        listener.start()
+        atexit.register(listener.stop)
     
     # Propagate to root logger
     logger.propagate = False 

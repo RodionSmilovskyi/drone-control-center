@@ -84,8 +84,8 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.35]` | `1535` | `[-150, +185]` | `[1385, 1720]` | Slew 0.35 m/s; integral active >= 0.018m |
-| **Roll (X)** | `self.roll_controller` (`vel_pid`) | `0.65` | `0.15` | `0.20` | `[-0.35, +0.35]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.35, max_vel=0.05`, `d_alpha=0.35`, slew `500 PWM/s` |
-| **Pitch (Y)** | `self.pitch_controller` (`vel_pid`) | `0.65` | `0.15` | `0.20` | `[-0.35, +0.35]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.35, max_vel=0.05`, `d_alpha=0.35`, slew `500 PWM/s` |
+| **Roll (X)** | `self.roll_controller` (`vel_pid`) | `1.00` | `0.22` | `0.08` | `[-0.40, +0.40]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.45, max_vel=0.07`, `d_alpha=0.25`, slew `500 PWM/s` |
+| **Pitch (Y)** | `self.pitch_controller` (`vel_pid`) | `1.00` | `0.22` | `0.08` | `[-0.40, +0.40]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.45, max_vel=0.07`, `d_alpha=0.25`, slew `500 PWM/s` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -540,3 +540,39 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Smoothed Optical Flow Velocity & D-Term Filtering (`ALPHA_FLOW = 0.42, ALPHA_VEL = 0.45` in `sensor_real.py`, `d_alpha = 0.35` in `cascaded_pid.py`, `max_rp_slew_rate = 500.0 PWM/s` in `flight_controller.py`):**
     - Suppresses single-frame SPI velocity steps by `35%` while keeping sensor filter lag low (`~85ms` total).
 - **Validation Status:** Verified on the FFT-identified closed-loop plant model (confirming monotonic convergence with zero growing oscillations) and passed all 18 automated unit tests (`18/18 OK`). Ready for on-device Raspberry Pi verification.
+
+### Entry 18 — Eliminating Barrier Stalls, D-Term Deceleration Cancellation, and Synchronous Logging Freezes (`kp_pos = 0.45, max_velocity = 0.07, kp_vel = 1.00, ki_vel = 0.22, kd_vel = 0.08`) (2026-11-01)
+- **Files Modified:**
+  - [`services/drone-inference/cascaded_pid.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/cascaded_pid.py)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-inference/inference.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/inference.py)
+  - [`core/drone_logging.py`](file:///home/rodion/projects/drone-control-center/core/drone_logging.py)
+  - [`tests/test_inference_altitude.py`](file:///home/rodion/projects/drone-control-center/tests/test_inference_altitude.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations (`logs/inference.log`, flight lines 97–713, 22.59s AI flight, 611 frames):**
+  1. **What Improved Dramatically in Entry 17:**
+     - **Growing `2.85s` resonance completely eliminated:** Unlike Entry 16 (where oscillations grew every `1.4s` until repeatedly saturating the `1450 / 1550 PWM` rails), `Roll` stayed within `[1458, 1536]` during hover (mostly `1480–1520 PWM`) and `Pitch` stayed within `[1464, 1550]` across the full **22.59s** flight.
+     - **Pitch (`sy`) Axis Centering:** Across all 599 airborne frames, `sy` achieved **`mean = -0.0055m` (`-5.5 mm`)**, **`median = -0.0001m` (`-0.1 mm`)**, `pct(sy > 0) = 49.9%`, and stayed bounded within `[-0.136m, +0.100m]` (`RMS = 6.8 cm`). During the first 8 seconds of free flight (`t = 0..8s`), `sy` remained within `[-3.7 cm, +7.0 cm]` and settled to `-0.4 cm` (`4 mm`).
+     - **Altitude Hold & Step-Down Descent:** Climbed smoothly from `0.018m` to `0.518m`, held `0.36m–0.44m` around the `0.418m` target, and descended briskly from `0.502m` to `0.116m` in `1.1s` when `s` was pressed (`lines 680–712`).
+  2. **Root Cause 1 — Starved Static Restoring Authority (`3.25 PWM` max P-pull at `v = 0`) Causing 2.0–3.0s Barrier Stalls (`sx = +0.234m` and `-0.165m`):**
+     - With `max_velocity = 0.05 m/s` and `kp_vel = 0.65`, whenever the drone stopped (`vx ≈ 0`) at a displaced position (`|sx| >= 0.15m`), the inner loop's proportional pull was capped at $100 \times 0.65 \times 0.05 = \mathbf{3.25\text{ PWM}}$ (`0.32°` tilt).
+     - `3.25 PWM` (`Roll = 1497` or `1503 PWM`) was too weak to overcome airframe roll bias and barrier recirculation, leaving the drone stalled at `sx = +0.231..+0.235m` for **2.0 seconds** (`lines 351–408`) and at `sx = -0.143..-0.167m` for **3.0 seconds** (`lines 471–561`).
+  3. **Root Cause 2 — Excessive Acceleration Derivative Ratio ($\tau_d = K_{d,\text{vel}}/K_{p,\text{vel}} = 0.31\text{s}$) Canceling Return Braking & Injecting SPI Chatter:**
+     - Reconstructing exact `P`, `I`, and `D` terms across all 599 airborne frames revealed `RMS(D_x) = 8.22 PWM` (nearly equal to `RMS(P_x) = 8.89 PWM`) with **`Mean frame-to-frame |ΔD_x| = 4.46 PWM/frame`** (`3.6x` larger than `|ΔP_x| = 1.25 PWM/frame`).
+     - Worse, because $\int_{t_1}^{t_2} D_{\text{vel}}\,dt = -100 K_{d,\text{vel}} (v(t_2) - v(t_1))$, whenever the drone returned toward `sx = 0` and began slowing down (`lines 194–230`, `vx` decelerating from `-0.12 m/s` toward `-0.06 m/s`), $\dot{v}_x > 0$ made $D_x$ systematically negative (`-2.1 to -6.5 PWM`), **canceling out the positive braking tilt `P_x = +3.5..+4.4 PWM`** (`Roll = 1500 PWM`) so the drone stopped braking and coasted right across `sx = 0`.
+  4. **Root Cause 3 — Wall-Stall Integral Windup Delaying Rebound Braking & Weak Velocity Braking (`kp_vel = 0.65`):**
+     - During the 3.0-second stall at `sx = -0.165m` (`lines 486–561`), `I_x` wound up to `+1.84 PWM` to unstick the drone. Once unstuck (`lines 561–585`), `I_x` remained positive all the way to `sx = 0` (`line 593`) while `kp_vel = 0.65` only generated `65 PWM/(m/s)` of braking, allowing the rebound to accelerate to `+0.35 m/s` and cross to `+0.24m`.
+  5. **Root Cause 4 — Synchronous File/Stdout Logging Freezes in 100Hz Flight Loop (`0.314s` at L328, `1.515s` at L681, `0.269s` at L698):**
+     - `WatchedFileHandler` (`os.stat()` + `flush()` on microSD card) and `StreamHandler(sys.stdout)` ran synchronously on every frame in `inference.py`. At `line 679` (`thr = 1594 PWM`), a `1.515s` microSD/stdout writeback stall froze `inference.py` while `fc.py` kept sending `thr = 1594 PWM`, causing an uncommanded climb from `0.327m` to `0.451m`.
+- **Adjustments Made:**
+  - **Restored Balanced Cascaded Authority (`kp_pos = 0.45, max_velocity = 0.07 m/s, kp_vel = 1.00, ki_vel = 0.22`):**
+    - Increases static proportional pull at `v = 0` by **2.15x** (`7.0 PWM` vs `3.25 PWM`, plus up to `8.8 PWM` integral = `15.8 PWM` unsticking authority) and increases velocity braking authority by **54%** (`100 PWM/(m/s)` vs `65 PWM/(m/s)`).
+    - Keeps effective position stiffness near origin at $K_{\text{pos,eff}} = 45.0\text{ PWM/m}$ (`2.5x` below Entry 16's resonant `112 PWM/m`) while raising the closed-loop damping ratio $\zeta \propto \sqrt{K_{p,\text{vel}} / K_{p,\text{pos}}}$ to its highest value yet ($\sqrt{1.00/0.45} = 1.49$).
+  - **Eliminated D-Term Deceleration Cancellation & SPI Chatter (`kd_vel: 0.20 -> 0.08, d_alpha: 0.35 -> 0.25`):**
+    - Sets inner acceleration lead time constant $\tau_d = K_{d,\text{vel}} / K_{p,\text{vel}} = 0.08\text{ s}$ (`80 ms`, matching Betaflight attitude actuator response), cutting frame-to-frame D-term chatter by **3.5x** (`4.46 -> 1.27 PWM/frame`) and ensuring `P_vel` braking stays active (`+4 to +5 PWM`) all the way to origin on return.
+  - **Implemented Distance-Proportional Return Integral Unwind (`cascaded_pid.py`):**
+    - Whenever the drone is moving toward the target (`position_error * current_vel > 0`), any return-direction integral (`vel_pid.integral * position_error > 0`) never winds up further and unwinds proportional to distance traveled (`-3.0 * current_vel * dt`, clamped at zero-crossing) so wall-unsticking integral sheds cleanly before reaching origin.
+  - **Offloaded Logging to Non-Blocking Bounded QueueListener (`core/drone_logging.py`) & Non-Blocking ZMQ PUB (`inference.py`):**
+    - Wrapped `WatchedFileHandler` and `StreamHandler` in a standard-library `QueueListener` with a bounded `queue.Queue(maxsize=512)` and `_NonBlockingQueueHandler` (`put_nowait`), and added `flags=zmq.NOBLOCK` to `rc_pub.send_pyobj(...)`, eliminating SD card / stdout freezes in the 100Hz flight loop.
+- **Validation Status:** Verified by replaying `logs/inference.log` through the Entry 18 controller and passed all 18 automated unit tests (`18/18 OK`). Ready for on-device Raspberry Pi verification.

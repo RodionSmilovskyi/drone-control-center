@@ -17,15 +17,15 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.35,
-        max_velocity: float = 0.05,
-        kp_vel: float = 0.65,
-        ki_vel: float = 0.15,
-        kd_vel: float = 0.20,
-        integral_limit: float = 0.35,
-        integral_min: float = -0.35,
-        d_alpha: float = 0.35,
-        max_integral_vel_error: float = 0.05,
+        kp_pos: float = 0.45,
+        max_velocity: float = 0.07,
+        kp_vel: float = 1.00,
+        ki_vel: float = 0.22,
+        kd_vel: float = 0.08,
+        integral_limit: float = 0.40,
+        integral_min: float = -0.40,
+        d_alpha: float = 0.25,
+        max_integral_vel_error: float = 0.07,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
@@ -68,22 +68,32 @@ class CascadedAxisController:
         self.vel_pid.setpoint = self.target_velocity
         self.velocity_error = self.target_velocity - current_vel
         
-        # Bounded, return-aware trim integral update (prevents high-velocity transient swings from corrupting hover trim)
+        # Bounded, return-aware trim integral update:
+        # 1. When stationary or drifting away from target, integrates clamped velocity error to learn hover trim
+        #    and provide extra authority to unstick from barriers.
+        # 2. Once moving toward target (position_error * current_vel > 0), never winds up further in the return
+        #    direction and unwinds any return-direction integral proportional to distance traveled (-3.0 * v * dt)
+        #    so temporary wall-unsticking integral sheds cleanly before reaching origin.
         if enable_integral:
             clamped_vel_err = float(np.clip(self.velocity_error, -self.max_integral_vel_error, self.max_integral_vel_error))
-            if self.position_error * self.velocity_error < 0.0:
-                # Drone is already moving toward target faster than target_velocity (pre-crossing braking phase):
-                if self.vel_pid.integral * self.velocity_error < 0.0:
-                    # Integral was pushing toward target; unwind 2.0x faster so it doesn't cause zero-crossing overshoot
-                    self.vel_pid.integral += 2.0 * clamped_vel_err * dt
-                # Do not wind up integral in the opposing (braking) direction during a fast return
+            if self.position_error * current_vel > 0.0:
+                # Drone is actively moving toward target position:
+                if self.vel_pid.integral * self.position_error > 0.0:
+                    # Unwind return-direction (wall-unsticking) integral proportional to distance traveled toward origin
+                    prev_sign = 1.0 if self.vel_pid.integral > 0.0 else -1.0
+                    self.vel_pid.integral -= 3.0 * current_vel * dt
+                    if self.vel_pid.integral * prev_sign < 0.0:
+                        self.vel_pid.integral = 0.0
+                elif self.position_error * self.velocity_error > 0.0:
+                    # Moving toward target slower than target_velocity while integral opposes return: gently relax opposing integral
+                    self.vel_pid.integral += clamped_vel_err * dt
             else:
                 if abs(current_vel) > self.max_velocity and self.position_error * current_vel < 0.0:
-                    # High-speed overshoot away from target: unwind wrong-sign integral fast, accumulate right-sign gently
+                    # High-speed drift/overshoot away from target: unwind wrong-sign integral fast, accumulate right-sign trim at 0.75x
                     if self.vel_pid.integral * self.velocity_error < 0.0:
-                        self.vel_pid.integral += 2.5 * clamped_vel_err * dt
+                        self.vel_pid.integral += 3.0 * clamped_vel_err * dt
                     else:
-                        self.vel_pid.integral += 0.35 * clamped_vel_err * dt
+                        self.vel_pid.integral += 0.75 * clamped_vel_err * dt
                 else:
                     # Normal hover / low-speed drift / stalled against barrier: integrate at full clamped rate to learn trim
                     self.vel_pid.integral += clamped_vel_err * dt
