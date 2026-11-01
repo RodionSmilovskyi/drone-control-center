@@ -17,17 +17,19 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 1.0,
-        max_velocity: float = 0.12,
-        kp_vel: float = 1.5,
-        ki_vel: float = 0.8,
-        kd_vel: float = 0.05,
-        integral_limit: float = 0.25,
-        integral_min: float = -0.25,
-        d_alpha: float = 0.35,
+        kp_pos: float = 0.60,
+        max_velocity: float = 0.08,
+        kp_vel: float = 1.20,
+        ki_vel: float = 0.30,
+        kd_vel: float = 0.18,
+        integral_limit: float = 0.45,
+        integral_min: float = -0.45,
+        d_alpha: float = 0.45,
+        max_integral_vel_error: float = 0.08,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
+        self.max_integral_vel_error = max_integral_vel_error
         self.target_position = 0.0
         self.target_velocity = 0.0
         self.position_error = 0.0
@@ -66,6 +68,27 @@ class CascadedAxisController:
         self.vel_pid.setpoint = self.target_velocity
         self.velocity_error = self.target_velocity - current_vel
         
-        # Inner Loop: Velocity PI/PID control (setpoint - current_vel)
-        vel_pid_out = self.vel_pid.compute(current_vel, dt, enable_integral=enable_integral)
+        # Bounded, return-aware trim integral update (prevents high-velocity transient swings from corrupting hover trim)
+        if enable_integral:
+            clamped_vel_err = float(np.clip(self.velocity_error, -self.max_integral_vel_error, self.max_integral_vel_error))
+            if self.position_error * self.velocity_error < 0.0:
+                # Drone is already moving toward target faster than target_velocity (pre-crossing braking phase):
+                if self.vel_pid.integral * self.velocity_error < 0.0:
+                    # Integral was pushing toward target; unwind 2.0x faster so it doesn't cause zero-crossing overshoot
+                    self.vel_pid.integral += 2.0 * clamped_vel_err * dt
+                # Do not wind up integral in the opposing (braking) direction during a fast return
+            else:
+                if abs(current_vel) > self.max_velocity and self.position_error * current_vel < 0.0:
+                    # High-speed overshoot away from target: unwind wrong-sign integral fast, accumulate right-sign gently
+                    if self.vel_pid.integral * self.velocity_error < 0.0:
+                        self.vel_pid.integral += 2.5 * clamped_vel_err * dt
+                    else:
+                        self.vel_pid.integral += 0.35 * clamped_vel_err * dt
+                else:
+                    # Normal hover / low-speed drift / stalled against barrier: integrate at full clamped rate to learn trim
+                    self.vel_pid.integral += clamped_vel_err * dt
+            self.vel_pid.integral = max(self.vel_pid.integral_min, min(self.vel_pid.integral_limit, self.vel_pid.integral))
+
+        # Inner Loop: Velocity P+D + managed I control
+        vel_pid_out = self.vel_pid.compute(current_vel, dt, enable_integral=False)
         return vel_pid_out
