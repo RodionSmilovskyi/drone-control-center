@@ -209,6 +209,28 @@ class TestInferenceAltitude(unittest.TestCase):
         # Integral must remain zero during dynamic swing away from origin
         self.assertAlmostEqual(self.fc.roll_controller.vel_pid.integral, 0.0, places=4)
 
+    def test_cascaded_d_term_acceleration_clamp_prevents_wall_bounce_spike(self):
+        # Regression test for Entry 21: verify that a violent wall-bounce velocity step (e.g. vx jumping from
+        # -0.35 m/s to +0.10 m/s in a single 0.033s frame -> raw acceleration 13.6 m/s^2) is clamped by
+        # max_d_accel=0.80 m/s^2 so the single-frame D-term kick is bounded (<= 6.0 PWM) instead of spiking to -70 PWM,
+        # while still providing derivative phase lead during smooth motion.
+        self.fc.reset()
+        obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        # Frame 1: moving left toward wall at vx = -0.35 m/s (norm = -0.07) at x = -0.25m
+        obs_pre_bounce = np.array([0.4, 1.5, -0.25, 0.0, -0.07, 0.0, 100.033], dtype=np.float64)
+        handle_ai(obs_pre_bounce, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        self.fc.roll_controller.vel_pid.derivative = 0.0
+
+        # Frame 2: abrupt wall rebound vx = +0.10 m/s (norm = +0.02) in 0.033s (raw dv/dt = +13.6 m/s^2)
+        obs_post_bounce = np.array([0.4, 1.5, -0.25, 0.0, 0.02, 0.0, 100.066], dtype=np.float64)
+        handle_ai(obs_post_bounce, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        d_pwm = abs(100.0 * self.fc.roll_controller.vel_pid.Kd * self.fc.roll_controller.vel_pid.derivative)
+        self.assertLessEqual(d_pwm, 6.0)
+        self.assertGreater(d_pwm, 2.0)
+
     def test_cascaded_return_braking_anti_windup(self):
         # Verify that when returning toward origin, the inner trim integral unwinds any wall-unsticking push
         # proportional to distance traveled toward 0 and NEVER winds up in the opposing (braking) direction.

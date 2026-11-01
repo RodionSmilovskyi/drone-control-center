@@ -10,6 +10,7 @@ class PIDController:
         integral_min: float = -0.35,
         d_alpha: float = 0.6,
         anti_windup_return: bool = False,
+        max_derivative: float = None,
     ):
         self.Kp, self.Ki, self.Kd = Kp, Ki, Kd
         self.setpoint = setpoint
@@ -19,6 +20,7 @@ class PIDController:
         self.integral_min = integral_min
         self.d_alpha = d_alpha
         self.anti_windup_return = anti_windup_return
+        self.max_derivative = max_derivative
         self.derivative = 0.0
         self.time_since_last_change = 0.0
 
@@ -35,6 +37,8 @@ class PIDController:
             if measurement != self.last_measurement:
                 real_dt = max(self.time_since_last_change + dt, 0.001)
                 new_derivative = -(measurement - self.last_measurement) / real_dt
+                if self.max_derivative is not None:
+                    new_derivative = max(-self.max_derivative, min(self.max_derivative, new_derivative))
                 self.derivative = self.d_alpha * new_derivative + (1.0 - self.d_alpha) * self.derivative
                 self.last_measurement = measurement
                 self.time_since_last_change = 0.0

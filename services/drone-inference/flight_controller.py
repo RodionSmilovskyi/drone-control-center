@@ -11,35 +11,40 @@ class FlightController:
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
         
         # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
-        # Outer loop maps position error to desired velocity (kp_pos=0.28, clamped to max_velocity = 0.06 m/s).
-        # Inner loop maps velocity error to corrective tilt PWM via overdamped PI+d (Kp=0.85, Ki=0.30, Kd=0.02):
-        #   - Effective position spring = 100 * 0.28 * 0.85 = 23.8 PWM/m; velocity damping = 85 PWM/(m/s)
-        #   - Closed-loop damping ratio zeta = 1.22 (overdamped) with low natural frequency wn = 0.68 rad/s
-        #   - Minimal Kd=0.02 (d_alpha=0.20) avoids wall-bounce acceleration spikes (-70/+58 PWM) since -Kp_vel*v
-        #     already provides direct first-derivative position damping.
-        #   - Stationary-gated Ki=0.30 (limit +/-0.35 -> +/-10.5 PWM) learns static trim and unsticks wall stalls
-        #     without winding up during dynamic swings.
+        # Outer loop maps position error to desired velocity (kp_pos=0.25, clamped to max_velocity = 0.06 m/s).
+        # Inner loop maps velocity error to corrective tilt PWM via phase-lead-compensated PID
+        # (Kp=0.55, Ki=0.30, Kd=0.18, d_alpha=0.35, max_d_accel=0.80 m/s^2):
+        #   - Sub-critical velocity gain Kp=0.55 (55 PWM/(m/s)) + gentle position spring (13.75 PWM/m) prevents
+        #     return-braking pulses from over-accelerating the rebound across origin.
+        #   - Derivative phase lead tau_d = Kd/Kp = 0.18/0.55 = 0.33s compensates the ~0.33s sensor/actuator delay,
+        #     leveling wings before velocity turnaround so swings decay at 0.39x per half-cycle.
+        #   - Physical acceleration clamp max_d_accel=0.80 m/s^2 bounds D-term to <= 14.4 PWM (<= 5.0 PWM single-frame
+        #     step), completely preventing wall-bounce acceleration spikes (-70/+58 PWM) while remaining linear in flight.
+        #   - Stationary-and-low-acceleration-gated Ki=0.30 (limit +/-0.35 -> +/-10.5 PWM) learns static trim and
+        #     unsticks wall stalls without firing at dynamic swing turnaround peaks.
         self.roll_controller = CascadedAxisController(
-            kp_pos=0.28,
+            kp_pos=0.25,
             max_velocity=0.06,
-            kp_vel=0.85,
+            kp_vel=0.55,
             ki_vel=0.30,
-            kd_vel=0.02,
+            kd_vel=0.18,
             integral_limit=0.35,
             integral_min=-0.35,
-            d_alpha=0.20,
+            d_alpha=0.35,
             max_integral_vel_error=0.06,
+            max_d_accel=0.80,
         )
         self.pitch_controller = CascadedAxisController(
-            kp_pos=0.28,
+            kp_pos=0.25,
             max_velocity=0.06,
-            kp_vel=0.85,
+            kp_vel=0.55,
             ki_vel=0.30,
-            kd_vel=0.02,
+            kd_vel=0.18,
             integral_limit=0.35,
             integral_min=-0.35,
-            d_alpha=0.20,
+            d_alpha=0.35,
             max_integral_vel_error=0.06,
+            max_d_accel=0.80,
         )
         # Backwards-compatible aliases to inner velocity PIDController objects
         self.roll_pid = self.roll_controller.vel_pid

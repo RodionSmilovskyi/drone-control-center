@@ -17,19 +17,21 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.28,
+        kp_pos: float = 0.25,
         max_velocity: float = 0.06,
-        kp_vel: float = 0.85,
+        kp_vel: float = 0.55,
         ki_vel: float = 0.30,
-        kd_vel: float = 0.02,
+        kd_vel: float = 0.18,
         integral_limit: float = 0.35,
         integral_min: float = -0.35,
-        d_alpha: float = 0.20,
+        d_alpha: float = 0.35,
         max_integral_vel_error: float = 0.06,
+        max_d_accel: float = 0.80,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
         self.max_integral_vel_error = max_integral_vel_error
+        self.max_d_accel = max_d_accel
         self.target_position = 0.0
         self.target_velocity = 0.0
         self.position_error = 0.0
@@ -43,6 +45,7 @@ class CascadedAxisController:
             integral_min=integral_min,
             d_alpha=d_alpha,
             anti_windup_return=False,
+            max_derivative=max_d_accel,
         )
 
     def reset(self):
@@ -83,14 +86,15 @@ class CascadedAxisController:
                 if self.vel_pid.integral * self.velocity_error < 0.0:
                     # Integral has the wrong sign (actively pushing against velocity_error): unwind fast
                     self.vel_pid.integral += 3.0 * clamped_vel_err * dt
-                elif abs(current_vel) <= 0.04:
-                    # Stationary / low-speed hover or wall stall (<= 4 cm/s): learn static trim / unstick from wall
+                elif abs(current_vel) <= 0.04 and abs(self.vel_pid.derivative) <= 0.20:
+                    # Stationary / low-speed hover or genuine wall stall (|v| <= 4 cm/s and low acceleration |a| <= 0.20 m/s^2,
+                    # excluding dynamic swing turnaround peaks where v briefly crosses 0 under high acceleration):
                     if abs(self.position_error) > 0.08 and abs(current_vel) <= 0.03:
                         unstick_step = float(np.sign(clamped_vel_err)) * max(abs(clamped_vel_err), 0.05)
                         self.vel_pid.integral += 4.0 * unstick_step * dt
                     else:
                         self.vel_pid.integral += clamped_vel_err * dt
-                elif self.position_error * current_vel >= 0.0:
+                elif self.position_error * current_vel >= 0.0 and abs(self.vel_pid.derivative) <= 0.20:
                     # Creeping slowly toward target (between 4 cm/s and target_velocity): gentle trim update
                     self.vel_pid.integral += 0.15 * clamped_vel_err * dt
                 # Else (abs(current_vel) > 0.04 and moving away from target): freeze integral to prevent swing slingshot
