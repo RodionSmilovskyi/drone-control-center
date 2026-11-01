@@ -11,30 +11,31 @@ class FlightController:
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
         
         # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
-        # Outer loop maps position error to desired velocity (kp_pos=0.60, clamped to max_velocity = 0.08 m/s).
-        # Inner loop maps velocity error to corrective tilt PWM via PID (Kp=1.20, Ki=0.30, Kd=0.18).
-        # Bounded, return-aware trim integrator learns steady-state hover bias (~1490 PWM Roll) without winding up during return braking.
+        # Outer loop maps position error to desired velocity (kp_pos=0.35, clamped to max_velocity = 0.05 m/s).
+        # Inner loop maps velocity error to corrective tilt PWM via PID (Kp=0.65, Ki=0.15, Kd=0.20).
+        # Sub-ultimate loop gain (~6 dB gain margin below Nyquist limit Ku=1.30 at w0=2.2 rad/s) and
+        # 3.2x lower outer-loop quadrature lag ensure strong net phase lead (+22 deg) and monotonic oscillation decay.
         self.roll_controller = CascadedAxisController(
-            kp_pos=0.60,
-            max_velocity=0.08,
-            kp_vel=1.20,
-            ki_vel=0.30,
-            kd_vel=0.18,
-            integral_limit=0.45,
-            integral_min=-0.45,
-            d_alpha=0.45,
-            max_integral_vel_error=0.08,
+            kp_pos=0.35,
+            max_velocity=0.05,
+            kp_vel=0.65,
+            ki_vel=0.15,
+            kd_vel=0.20,
+            integral_limit=0.35,
+            integral_min=-0.35,
+            d_alpha=0.35,
+            max_integral_vel_error=0.05,
         )
         self.pitch_controller = CascadedAxisController(
-            kp_pos=0.60,
-            max_velocity=0.08,
-            kp_vel=1.20,
-            ki_vel=0.30,
-            kd_vel=0.18,
-            integral_limit=0.45,
-            integral_min=-0.45,
-            d_alpha=0.45,
-            max_integral_vel_error=0.08,
+            kp_pos=0.35,
+            max_velocity=0.05,
+            kp_vel=0.65,
+            ki_vel=0.15,
+            kd_vel=0.20,
+            integral_limit=0.35,
+            integral_min=-0.35,
+            d_alpha=0.35,
+            max_integral_vel_error=0.05,
         )
         # Backwards-compatible aliases to inner velocity PIDController objects
         self.roll_pid = self.roll_controller.vel_pid
@@ -54,7 +55,7 @@ class FlightController:
         self.fc_max_angle_deg = 50.0
         self.max_indoor_tilt_deg = 5.0
         self.max_rp_correction = (self.max_indoor_tilt_deg / self.fc_max_angle_deg) * 500.0
-        self.max_rp_slew_rate = 450.0  # Max 450 PWM/s (~15 PWM per 33ms frame) to minimize unwind phase lag at turnaround
+        self.max_rp_slew_rate = 500.0  # Max 500 PWM/s (~16.5 PWM per 33ms frame) to minimize unwind phase lag at turnaround
         self.max_yaw_correction = 50.0
         
         # Ground threshold for throttle integral: 0.018m (below resting ~0.021-0.030m ToF reading)

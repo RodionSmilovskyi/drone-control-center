@@ -84,8 +84,8 @@ All 4 controllers use derivative-on-measurement (`PIDController`) to prevent der
 | Axis / Channel | Controller Attribute | `Kp` | `Ki` | `Kd` | Integral Bounds | Baseline PWM | Correction Bounds (PWM) | Effective PWM Range | Notes |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **Throttle (Z)** | `self.throttle_pid` | `5.2` | `1.8` | `2.2` | `[-0.35, +1.35]` | `1535` | `[-150, +185]` | `[1385, 1720]` | Slew 0.35 m/s; integral active >= 0.018m |
-| **Roll (X)** | `self.roll_controller` (`vel_pid`) | `1.20` | `0.30` | `0.18` | `[-0.45, +0.45]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.60, max_vel=0.08`, `d_alpha=0.45`, slew `450 PWM/s` |
-| **Pitch (Y)** | `self.pitch_controller` (`vel_pid`) | `1.20` | `0.30` | `0.18` | `[-0.45, +0.45]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.60, max_vel=0.08`, `d_alpha=0.45`, slew `450 PWM/s` |
+| **Roll (X)** | `self.roll_controller` (`vel_pid`) | `0.65` | `0.15` | `0.20` | `[-0.35, +0.35]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.35, max_vel=0.05`, `d_alpha=0.35`, slew `500 PWM/s` |
+| **Pitch (Y)** | `self.pitch_controller` (`vel_pid`) | `0.65` | `0.15` | `0.20` | `[-0.35, +0.35]` | `1500` | `[-50, +50]` (`±5°`) | `[1450, 1550]` | Outer `kp_pos=0.35, max_vel=0.05`, `d_alpha=0.35`, slew `500 PWM/s` |
 | **Yaw** | `self.yaw_pid` | `0.5` | `0.0` | `0.1` | `[-0.20, +0.20]` | `1500` | `[-50, +50]` | `[1450, 1550]` | Setpoint & state = `0.0` $\rightarrow 1500$ |
 
 #### Degree-to-PWM Mapping on SpeedyBee F405 Mini
@@ -506,3 +506,37 @@ When analyzing `logs/inference.log` (format: `OBS: [alt, front, sx, sy, vx, vy, 
   - **Halved Optical Flow Velocity Filter Lag (`ALPHA_FLOW = 0.50, ALPHA_VEL = 0.55` in `sensor_real.py`):**
     - Reduced combined velocity filter time constant from `~138ms` down to `~60ms`.
 - **Validation Status:** All 18 automated unit tests passed (`18/18 OK`). Ready for on-device Raspberry Pi verification.
+
+### Entry 17 — Resolving Growing `2.85s` Oscillations via Sub-Ultimate Velocity Gain (`kp_vel = 0.65`) and Outer-Loop Phase-Lead Decoupling (`kp_pos = 0.35, max_velocity = 0.05`) (2026-11-01)
+- **Files Modified:**
+  - [`services/drone-inference/cascaded_pid.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/cascaded_pid.py)
+  - [`services/drone-inference/flight_controller.py`](file:///home/rodion/projects/drone-control-center/services/drone-inference/flight_controller.py)
+  - [`services/drone-sensors/sensor_real.py`](file:///home/rodion/projects/drone-control-center/services/drone-sensors/sensor_real.py)
+  - [`tests/test_inference_altitude.py`](file:///home/rodion/projects/drone-control-center/tests/test_inference_altitude.py)
+  - [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md)
+  - [`DESIGN.md`](file:///home/rodion/projects/drone-control-center/DESIGN.md)
+- **Telemetry Observations & Frequency-Domain System Identification (`logs/inference.log`, flight lines 110–838, 24.3s AI flight):**
+  1. **What Improved Dramatically in Entry 16:**
+     - Compared to Entry 15 (where `shift_x` and `shift_y` diverged to `-0.52m`), Entry 16 kept `shift_y` bounded within **`[-0.100m, +0.116m]` (`±11.6cm`)** and `shift_x` bounded within **`[-0.163m, +0.299m]`** over a full **24.3-second** flight (`t = 5851.15s -> 5875.43s`), including a controlled 6-step descent (`+0.40m -> +0.35m -> +0.30m -> +0.25m -> +0.20m -> +0.14m -> disarm`).
+     - Entry 16's bounded return-aware integrator worked as intended: `|I|` stayed within `<= 0.02` (`<= 2 PWM`), and linear regression of horizontal acceleration vs. tilt (`ax` on `Roll - 1500` and `ay` on `Pitch - 1500`) revealed that true neutral hover trim on this airframe is **`1500.1 PWM` (Roll)** and **`1499.4 PWM` (Pitch)** (`~1500 PWM` on both axes).
+  2. **Root Cause 1 — Open-Loop Gain Exceeded the Nyquist Ultimate Gain Limit (`Ku = 1.30`) at the `-180°` Phase Crossover Frequency (`w0 ≈ 2.20 rad/s`, `T ≈ 2.85s`):**
+     - Fast Fourier Transform (FFT) transfer-function identification of the physical plant $G_v(j\omega) = \frac{V(j\omega)}{U(j\omega)}$ across the 24.3s flight (`lines 145–475` for X, `lines 380–730` for Y) revealed that at $\omega_0 = 2.20\text{ rad/s}$ ($f_0 = 0.35\text{ Hz}$, period $T = 2.85\text{s}$), the combined phase lag of acceleration-to-velocity integration ($-90^\circ$) plus Betaflight Angle Mode attitude response, MSP serial transport, and optical flow filtering ($-92^\circ$) reaches **$-181^\circ$ to $-183^\circ$** with plant gain $|G_v(j\omega_0)| = 0.740\text{–}0.766\text{ (m/s)/unit}$.
+     - Consequently, the **ultimate velocity loop gain (Nyquist stability boundary)** at $\omega_0 = 2.20\text{ rad/s}$ is $K_{u,\text{vel}} = \frac{1}{0.766} = \mathbf{1.30\text{ unit/(m/s)}}$.
+     - With Entry 16's `kp_vel = 1.20`, the effective controller gain $\left|\frac{U(j\omega_0)}{-V(j\omega_0)}\right|$ measured in the flight log was **`1.305` (X) and `1.351` (Y)**, yielding an open-loop magnitude $|L(j\omega_0)| = 1.31 \times 0.766 = \mathbf{1.004\text{–}1.02 > 1.0}$ right at $-180^\circ$ phase! Because $|L(j\omega_0)|$ was slightly above `1.0`, each half-cycle (`1.43s`) amplified the oscillation by `~10–15%` (`sx` peaks: `-0.043m -> +0.019m -> -0.028m -> +0.032m -> -0.036m -> +0.042m -> -0.109m -> +0.168m -> -0.155m -> +0.299m`; `sy` peaks: `-0.035m -> +0.044m -> -0.046m -> +0.072m -> -0.088m -> +0.097m -> -0.100m -> +0.116m`) until saturating against the `±50 PWM` (`1450 / 1550`) rails.
+  3. **Root Cause 2 — Outer Position Loop Phase Lag Cancelled 92% of Inner Velocity D-Term Phase Lead (`kp_pos = 0.60` too high):**
+     - The effective linear frequency response of the cascaded controller from $-V(j\omega)$ to $U(j\omega)$ is:
+       $$C_{\text{eff}}(j\omega) = \frac{U(j\omega)}{-V(j\omega)} = k_{p,\text{vel}} + j\left(\omega k_{d,\text{vel}} - \frac{k_{p,\text{pos}} k_{p,\text{vel}}}{\omega} - \frac{k_{i,\text{vel}}}{\omega}\right)$$
+     - At $\omega_0 = 2.20\text{ rad/s}$, Entry 16's outer position loop introduced a quadrature phase-lag component $-\frac{k_{p,\text{pos}} k_{p,\text{vel}}}{\omega_0} = -\frac{0.60 \times 1.20}{2.20} = \mathbf{-0.327}$, which **cancelled 92% of the phase lead** provided by the inner velocity derivative $+\omega_0 k_{d,\text{vel}} \cos(\phi_d) \approx \mathbf{+0.356}$, leaving only **`+1.0°` (Y) to `+3.2°` (X)** of net phase lead!
+     - In the time domain: at every turnaround peak (`v = 0`), the drone was already banked inward (`a ≈ 0.44 m/s²`) from braking the outbound swing; commanding `target_vel = ±0.08 m/s` inward prevented the inner loop from immediately damping that inward acceleration, propelling the drone across origin at `0.27–0.43 m/s`.
+  4. **Root Cause 3 — Single-Frame Optical Flow D-Term Chattering (`ALPHA_FLOW = 0.50, ALPHA_VEL = 0.55, d_alpha = 0.45`):**
+     - Step changes in SPI optical flow velocity (`Δv ≈ 0.05 m/s` in `33ms`) multiplied by `kd_vel = 0.18` with `d_alpha = 0.45` produced `±12–15 PWM` single-frame D-term kicks (`lines 147–165, 482–488, 521–525, 716–721`).
+- **Adjustments Made:**
+  - **Halved Inner Loop Proportional Gain Below Nyquist Ultimate Limit (`kp_vel: 1.20 -> 0.65`):**
+    - Drops open-loop gain $|L(j\omega_0)|$ from `1.02` down to **`0.50`** (`~6 dB` gain margin below $K_u = 1.30$), ensuring oscillations decay rapidly instead of growing and preventing `1450 / 1550 PWM` bang-bang rail saturation.
+  - **Decoupled Outer Position Loop Bandwidth (`kp_pos: 0.60 -> 0.35, max_velocity: 0.08 -> 0.05 m/s`) & Strengthened Net Phase Lead (`kd_vel: 0.18 -> 0.20, d_alpha: 0.45 -> 0.35`):**
+    - Cuts the destabilizing outer-loop quadrature lag $\frac{k_{p,\text{pos}} k_{p,\text{vel}}}{\omega_0}$ by **3.2x** (from `-0.327` down to `-0.103`), while $+\omega_0 k_{d,\text{vel}}$ provides `+0.38` of phase lead — boosting net controller phase lead from `+2°` to **`+22°`** at $\omega_0 = 2.20\text{ rad/s}$ and capping return approach speed to a gentle `5 cm/s`.
+  - **Reduced Trim Integrator Gain & Bounds (`ki_vel: 0.30 -> 0.15, integral_limit: ±0.35 -> ±5.25 PWM max, max_integral_vel_error: 0.05 m/s`):**
+    - Because empirical neutral hover trim is `1500.1 / 1499.4 PWM`, `±5.25 PWM` trim authority is more than sufficient while cutting integral phase lag in half.
+  - **Smoothed Optical Flow Velocity & D-Term Filtering (`ALPHA_FLOW = 0.42, ALPHA_VEL = 0.45` in `sensor_real.py`, `d_alpha = 0.35` in `cascaded_pid.py`, `max_rp_slew_rate = 500.0 PWM/s` in `flight_controller.py`):**
+    - Suppresses single-frame SPI velocity steps by `35%` while keeping sensor filter lag low (`~85ms` total).
+- **Validation Status:** Verified on the FFT-identified closed-loop plant model (confirming monotonic convergence with zero growing oscillations) and passed all 18 automated unit tests (`18/18 OK`). Ready for on-device Raspberry Pi verification.

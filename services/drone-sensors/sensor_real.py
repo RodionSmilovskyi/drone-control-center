@@ -56,10 +56,10 @@ class SensorReal:
         
         # Deadbands and Smoothing
         self.FLOW_DEADBAND = 0.05 # Threshold on filtered value to suppress jitter
-        self.ALPHA_FLOW = 0.50   # Responsive optical flow filtering (~33ms tau) to minimize phase lag in velocity loop
+        self.ALPHA_FLOW = 0.42   # Balanced optical flow LPF (~45ms tau) to suppress SPI pixel steps while keeping low lag
         self.ALPHA_ALT = 0.6     # Lower phase lag for altitude feedback
         self.ALPHA_FRONT = 0.3
-        self.ALPHA_VEL = 0.55    # Fast velocity LPF (~27ms tau) to avoid double-filtering lag in cascaded inner loop
+        self.ALPHA_VEL = 0.45    # Balanced velocity LPF (~40ms tau) to prevent single-frame D-term kicks in inner loop
         self.GROUND_ALT_THRESHOLD = 0.045  # Above resting/spin-up ground height (~0.028-0.043m)
 
         self.filtered_dx = 0.0

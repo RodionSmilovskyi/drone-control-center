@@ -157,13 +157,13 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(rc[3], 1500)
 
     def test_cascaded_outer_loop_velocity_clamping(self):
-        # Verify outer loop clamps target velocity to +/- max_velocity (0.08 m/s) under large position steps
+        # Verify outer loop clamps target velocity to +/- max_velocity (0.05 m/s) under large position steps
         self.fc.reset()
         obs = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         # Large positive X shift step (+0.50m)
         handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.50, desired_shift_y=-0.50)
-        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.08, places=4)
-        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.08, places=4)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.05, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.05, places=4)
 
     def test_cascaded_return_braking_anti_windup(self):
         # Verify that when returning toward origin faster than target_velocity,
@@ -176,7 +176,7 @@ class TestInferenceAltitude(unittest.TestCase):
         obs_stalled = np.array([0.4, 1.5, 0.10, 0.0, 0.0, 0.0, 101.0], dtype=np.float64)
         for _ in range(30):
             handle_ai(obs_stalled, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
-        self.assertLess(self.fc.roll_controller.vel_pid.integral, -0.05)
+        self.assertLess(self.fc.roll_controller.vel_pid.integral, -0.03)
 
         # 2. Drone now returns toward 0 faster than target_velocity (x = +0.08m, vx = -0.35 m/s -> norm -0.07)
         # Integral should unwind toward 0, and even over 40 frames of fast return braking, must NOT wind up positive (> 0.01)

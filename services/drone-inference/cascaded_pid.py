@@ -17,15 +17,15 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.60,
-        max_velocity: float = 0.08,
-        kp_vel: float = 1.20,
-        ki_vel: float = 0.30,
-        kd_vel: float = 0.18,
-        integral_limit: float = 0.45,
-        integral_min: float = -0.45,
-        d_alpha: float = 0.45,
-        max_integral_vel_error: float = 0.08,
+        kp_pos: float = 0.35,
+        max_velocity: float = 0.05,
+        kp_vel: float = 0.65,
+        ki_vel: float = 0.15,
+        kd_vel: float = 0.20,
+        integral_limit: float = 0.35,
+        integral_min: float = -0.35,
+        d_alpha: float = 0.35,
+        max_integral_vel_error: float = 0.05,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
