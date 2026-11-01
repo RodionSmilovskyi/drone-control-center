@@ -3,6 +3,13 @@ import numpy as np
 import json
 import sys
 import os
+import types
+
+if "zmq" not in sys.modules:
+    try:
+        import zmq
+    except ModuleNotFoundError:
+        sys.modules["zmq"] = types.ModuleType("zmq")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../services/drone-inference')))
@@ -157,34 +164,50 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(rc[3], 1500)
 
     def test_cascaded_outer_loop_velocity_clamping(self):
-        # Verify outer loop clamps target velocity to +/- max_velocity (0.08 m/s) under large position steps
+        # Verify outer loop clamps target velocity to +/- max_velocity (0.06 m/s) under large position steps
         self.fc.reset()
         obs = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         # Large positive X shift step (+0.50m)
         handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.50, desired_shift_y=-0.50)
-        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.08, places=4)
-        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.08, places=4)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.06, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.06, places=4)
 
     def test_cascaded_wall_unsticking_preserves_trim_under_small_return_wiggles(self):
-        # Regression test for Entry 19: when pinned at x = +0.15m with tiny leftward wiggles (vx = -0.02 m/s,
-        # which is slower than target_velocity = -0.0675 m/s), integral must CONTINUE building negative trim
-        # rather than unwinding to 0, reaching < -12 PWM (Roll <= 1483 PWM) to overcome trim + wall suction.
+        # Regression test: when pinned at x = +0.15m with tiny leftward wiggles (vx = -0.02 m/s,
+        # which is slower than target_velocity = -0.042 m/s), integral must CONTINUE building negative trim
+        # rather than unwinding to 0, reaching < -5.5 PWM (Roll <= 1490 PWM) to overcome trim + wall suction.
         self.fc.reset()
         obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
 
-        # Simulate 45 frames (~1.5s) at x = +0.15m with small leftward wiggle vx = -0.02 m/s (norm = -0.004)
+        # Simulate 60 frames (~2.0s) at x = +0.15m with small leftward wiggle vx = -0.02 m/s (norm = -0.004)
         obs_wall_wiggle = np.array([0.4, 1.5, 0.15, 0.0, -0.004, 0.0, 101.0], dtype=np.float64)
         prev_integral = 0.0
-        for _ in range(45):
+        for _ in range(60):
             rc = handle_ai(obs_wall_wiggle, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
-            self.assertLess(self.fc.roll_controller.vel_pid.integral, prev_integral)
+            self.assertLessEqual(self.fc.roll_controller.vel_pid.integral, prev_integral)
             prev_integral = self.fc.roll_controller.vel_pid.integral
 
-        # Integral contribution (100 * Ki * integral) must exceed -10 PWM and Roll must pull strongly left (<= 1485 PWM)
+        # Integral contribution (100 * Ki * integral) must exceed -5.5 PWM and Roll must pull strongly left (<= 1490 PWM)
         i_pwm = 100.0 * self.fc.roll_controller.vel_pid.Ki * self.fc.roll_controller.vel_pid.integral
-        self.assertLess(i_pwm, -10.0)
-        self.assertLessEqual(rc[0], 1485)
+        self.assertLess(i_pwm, -5.5)
+        self.assertLessEqual(rc[0], 1490)
+
+    def test_cascaded_no_swing_integral_slingshot(self):
+        # Regression test for Entry 20: when swinging away from origin at |vx| > 0.04 m/s (e.g. vx = -0.15 m/s
+        # moving from x = -0.01m to x = -0.10m), the velocity integrator must NOT wind up positive and overpower
+        # P-braking on the subsequent return.
+        self.fc.reset()
+        obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        # Simulate 30 frames (1.0s) of dynamic swing away from origin (x = -0.06m, vx = -0.15 m/s -> norm -0.03)
+        obs_swing_away = np.array([0.4, 1.5, -0.06, 0.0, -0.03, 0.0, 101.0], dtype=np.float64)
+        for _ in range(30):
+            handle_ai(obs_swing_away, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        # Integral must remain zero during dynamic swing away from origin
+        self.assertAlmostEqual(self.fc.roll_controller.vel_pid.integral, 0.0, places=4)
 
     def test_cascaded_return_braking_anti_windup(self):
         # Verify that when returning toward origin, the inner trim integral unwinds any wall-unsticking push

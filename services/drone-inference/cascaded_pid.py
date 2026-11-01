@@ -17,15 +17,15 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.45,
-        max_velocity: float = 0.08,
-        kp_vel: float = 0.72,
-        ki_vel: float = 1.10,
-        kd_vel: float = 0.16,
-        integral_limit: float = 0.15,
-        integral_min: float = -0.15,
-        d_alpha: float = 0.32,
-        max_integral_vel_error: float = 0.08,
+        kp_pos: float = 0.28,
+        max_velocity: float = 0.06,
+        kp_vel: float = 0.85,
+        ki_vel: float = 0.30,
+        kd_vel: float = 0.02,
+        integral_limit: float = 0.35,
+        integral_min: float = -0.35,
+        d_alpha: float = 0.20,
+        max_integral_vel_error: float = 0.06,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
@@ -68,30 +68,38 @@ class CascadedAxisController:
         self.vel_pid.setpoint = self.target_velocity
         self.velocity_error = self.target_velocity - current_vel
         
-        # Bounded, velocity-error-aware trim integral update:
-        # 1. Whenever drifting away, stalled against a wall, or moving toward the target SLOWER than target_velocity
-        #    (position_error * velocity_error >= 0), the drone has not yet overcome steady-state trim bias / wall
-        #    suction, so integrate clamped velocity error at full rate (never wiping trim on tiny return wiggles).
-        # 2. Only when moving toward the target FASTER than target_velocity (position_error * velocity_error < 0)
-        #    freeze opposing (braking) integral windup, and relax return-direction integral toward 0 without crossing 0.
+        # Anti-slingshot, stationary-gated trim & wall-unsticking integral update:
+        # 1. Separate static trim/wall-stall from dynamic swing momentum:
+        #    - When nearly stationary (|current_vel| <= 0.04 m/s), velocity error reflects true hover bias
+        #      or wall stall (with a 2.5x unsticking boost when displaced > 8cm).
+        #    - When actively moving (|current_vel| > 0.04 m/s), unwind any wrong-sign integral that is
+        #      propelling the overshoot (3.0x), and do NOT wind up on transient swing momentum away from target.
+        # 2. When moving toward target faster than target_velocity (position_error * velocity_error < 0),
+        #    freeze opposing (braking) windup and briskly unwind return-direction integral toward 0 so P-braking
+        #    is never overpowered by stale unsticking integral.
         if enable_integral:
             clamped_vel_err = float(np.clip(self.velocity_error, -self.max_integral_vel_error, self.max_integral_vel_error))
             if self.position_error * self.velocity_error >= 0.0:
-                if abs(current_vel) > self.max_velocity and self.position_error * current_vel < 0.0 and self.vel_pid.integral * self.velocity_error < 0.0:
-                    # High-speed overshoot away from target while integral has wrong sign: unwind wrong-sign integral fast
-                    self.vel_pid.integral += 2.5 * clamped_vel_err * dt
-                elif abs(self.position_error) > 0.06 and abs(current_vel) < 0.5 * abs(self.target_velocity):
-                    # Stalled against wall or moving < 50% of target velocity while displaced (>6cm): 1.5x unsticking boost
-                    self.vel_pid.integral += 1.5 * clamped_vel_err * dt
-                else:
-                    # Hover / drift away / sub-target return speed: integrate at full rate to learn trim
-                    self.vel_pid.integral += clamped_vel_err * dt
+                if self.vel_pid.integral * self.velocity_error < 0.0:
+                    # Integral has the wrong sign (actively pushing against velocity_error): unwind fast
+                    self.vel_pid.integral += 3.0 * clamped_vel_err * dt
+                elif abs(current_vel) <= 0.04:
+                    # Stationary / low-speed hover or wall stall (<= 4 cm/s): learn static trim / unstick from wall
+                    if abs(self.position_error) > 0.08 and abs(current_vel) <= 0.03:
+                        unstick_step = float(np.sign(clamped_vel_err)) * max(abs(clamped_vel_err), 0.05)
+                        self.vel_pid.integral += 4.0 * unstick_step * dt
+                    else:
+                        self.vel_pid.integral += clamped_vel_err * dt
+                elif self.position_error * current_vel >= 0.0:
+                    # Creeping slowly toward target (between 4 cm/s and target_velocity): gentle trim update
+                    self.vel_pid.integral += 0.15 * clamped_vel_err * dt
+                # Else (abs(current_vel) > 0.04 and moving away from target): freeze integral to prevent swing slingshot
             else:
                 # Moving toward target faster than target_velocity (position_error * velocity_error < 0):
-                # Never wind up in the opposing (braking) direction; only relax return-direction integral toward 0.
+                # Never wind up in the opposing (braking) direction; briskly relax return-direction integral toward 0.
                 if self.vel_pid.integral * self.position_error > 0.0:
                     prev_sign = 1.0 if self.vel_pid.integral > 0.0 else -1.0
-                    unwind_gain = 2.5 if abs(current_vel) > 1.5 * self.max_velocity else 0.35
+                    unwind_gain = 3.0 if abs(current_vel) > 1.5 * self.max_velocity else 1.2
                     self.vel_pid.integral += unwind_gain * clamped_vel_err * dt
                     if self.vel_pid.integral * prev_sign < 0.0:
                         self.vel_pid.integral = 0.0

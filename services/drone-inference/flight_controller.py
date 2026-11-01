@@ -11,32 +11,35 @@ class FlightController:
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
         
         # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
-        # Outer loop maps position error to desired velocity (kp_pos=0.45, clamped to max_velocity = 0.08 m/s).
-        # Inner loop maps velocity error to corrective tilt PWM via PID (Kp=0.72, Ki=1.10, Kd=0.16).
-        # Kp=0.72 stays well below the Nyquist ultimate gain (Ku=1.30) while Kd=0.16 (tau_d=222ms, d_alpha=0.32)
-        # provides phase lead to damp turnaround acceleration and level wings before crossing origin.
-        # Ki=1.10 (limit +/-0.15 -> +/-16.5 PWM) learns hover trim (-10.5 PWM) within ~1.5s and overcomes wall Coanda suction.
+        # Outer loop maps position error to desired velocity (kp_pos=0.28, clamped to max_velocity = 0.06 m/s).
+        # Inner loop maps velocity error to corrective tilt PWM via overdamped PI+d (Kp=0.85, Ki=0.30, Kd=0.02):
+        #   - Effective position spring = 100 * 0.28 * 0.85 = 23.8 PWM/m; velocity damping = 85 PWM/(m/s)
+        #   - Closed-loop damping ratio zeta = 1.22 (overdamped) with low natural frequency wn = 0.68 rad/s
+        #   - Minimal Kd=0.02 (d_alpha=0.20) avoids wall-bounce acceleration spikes (-70/+58 PWM) since -Kp_vel*v
+        #     already provides direct first-derivative position damping.
+        #   - Stationary-gated Ki=0.30 (limit +/-0.35 -> +/-10.5 PWM) learns static trim and unsticks wall stalls
+        #     without winding up during dynamic swings.
         self.roll_controller = CascadedAxisController(
-            kp_pos=0.45,
-            max_velocity=0.08,
-            kp_vel=0.72,
-            ki_vel=1.10,
-            kd_vel=0.16,
-            integral_limit=0.15,
-            integral_min=-0.15,
-            d_alpha=0.32,
-            max_integral_vel_error=0.08,
+            kp_pos=0.28,
+            max_velocity=0.06,
+            kp_vel=0.85,
+            ki_vel=0.30,
+            kd_vel=0.02,
+            integral_limit=0.35,
+            integral_min=-0.35,
+            d_alpha=0.20,
+            max_integral_vel_error=0.06,
         )
         self.pitch_controller = CascadedAxisController(
-            kp_pos=0.45,
-            max_velocity=0.08,
-            kp_vel=0.72,
-            ki_vel=1.10,
-            kd_vel=0.16,
-            integral_limit=0.15,
-            integral_min=-0.15,
-            d_alpha=0.32,
-            max_integral_vel_error=0.08,
+            kp_pos=0.28,
+            max_velocity=0.06,
+            kp_vel=0.85,
+            ki_vel=0.30,
+            kd_vel=0.02,
+            integral_limit=0.35,
+            integral_min=-0.35,
+            d_alpha=0.20,
+            max_integral_vel_error=0.06,
         )
         # Backwards-compatible aliases to inner velocity PIDController objects
         self.roll_pid = self.roll_controller.vel_pid
