@@ -17,24 +17,27 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.50,
-        max_velocity: float = 0.14,
-        kp_vel: float = 0.50,
+        kp_pos: float = 0.42,
+        max_velocity: float = 0.10,
+        kp_vel: float = 0.40,
         ki_vel: float = 0.08,
-        kd_vel: float = 0.18,
+        kd_vel: float = 0.24,
         integral_limit: float = 0.25,
         integral_min: float = -0.25,
-        d_alpha: float = 0.35,
+        d_alpha: float = 0.32,
         max_integral_vel_error: float = 0.05,
-        max_d_accel: float = 0.80,
+        max_d_accel: float = 0.75,
+        pos_lead_tau: float = 0.70,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
         self.max_integral_vel_error = max_integral_vel_error
         self.max_d_accel = max_d_accel
+        self.pos_lead_tau = pos_lead_tau
         self.target_position = 0.0
         self.target_velocity = 0.0
         self.position_error = 0.0
+        self.lead_position_error = 0.0
         self.velocity_error = 0.0
         
         self.vel_pid = PIDController(
@@ -52,6 +55,7 @@ class CascadedAxisController:
         self.target_position = 0.0
         self.target_velocity = 0.0
         self.position_error = 0.0
+        self.lead_position_error = 0.0
         self.velocity_error = 0.0
         self.vel_pid.reset()
 
@@ -66,8 +70,13 @@ class CascadedAxisController:
         self.target_position = target_pos
         self.position_error = self.target_position - current_pos
         
-        # Outer Loop: P-control with hard velocity clamp
-        self.target_velocity = float(np.clip(self.kp_pos * self.position_error, -self.max_velocity, self.max_velocity))
+        # Outer Loop: Stopping-distance lead position error + hard velocity clamp.
+        # Projecting position forward by pos_lead_tau * current_vel (current_pos + pos_lead_tau * current_vel)
+        # preserves 100% static stiffness when stationary (current_vel == 0), while zeroing target_velocity
+        # before the drone crosses the target on return swings or waypoint approaches so the outer loop
+        # never pushes into an overshoot or triggers a delayed reverse-tilt swing-back.
+        self.lead_position_error = self.position_error - self.pos_lead_tau * current_vel
+        self.target_velocity = float(np.clip(self.kp_pos * self.lead_position_error, -self.max_velocity, self.max_velocity))
         self.vel_pid.setpoint = self.target_velocity
         self.velocity_error = self.target_velocity - current_vel
         

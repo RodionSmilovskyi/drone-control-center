@@ -33,7 +33,7 @@ mode_lock = threading.Lock()
 # Indoor-safe maneuver test sequence with smooth setpoint ramping:
 # Ramp rates smoothly lead vertical and horizontal maneuvers without abrupt derivative spikes.
 TEST_Z_RAMP_RATE_MS = 0.10   # 10 cm/s vertical setpoint ramp rate
-TEST_XY_RAMP_RATE_MS = 0.15  # 15 cm/s horizontal setpoint ramp rate (reaches +/-25cm in 1.67s of 6.0s step)
+TEST_XY_RAMP_RATE_MS = 0.12  # 12 cm/s horizontal setpoint ramp rate (matches 0.09 m/s cruise speed without overshoot)
 # (step_label, mode, shift_z_meters, shift_x_meters, shift_y_meters, duration_seconds)
 TEST_SEQUENCE_STEPS = [
     ("1/14 Arming Motors", "armed", 0.40, 0.00, 0.00, 1.5),
@@ -41,13 +41,13 @@ TEST_SEQUENCE_STEPS = [
     ("3/14 Climb (0.40m -> 0.62m)", "ai", 0.62, 0.00, 0.00, 5.0),
     ("4/14 Descend (0.62m -> 0.28m)", "ai", 0.28, 0.00, 0.00, 5.5),
     ("5/14 Level Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 4.0),
-    ("6/14 Pitch Forward (+25cm Y)", "ai", 0.40, 0.00, 0.25, 6.0),
-    ("7/14 Center Hover", "ai", 0.40, 0.00, 0.00, 5.5),
-    ("8/14 Pitch Back (-25cm Y)", "ai", 0.40, 0.00, -0.25, 6.0),
-    ("9/14 Center Hover", "ai", 0.40, 0.00, 0.00, 5.5),
-    ("10/14 Roll Right (+25cm X)", "ai", 0.40, 0.25, 0.00, 6.0),
-    ("11/14 Center Hover", "ai", 0.40, 0.00, 0.00, 5.5),
-    ("12/14 Roll Left (-25cm X)", "ai", 0.40, -0.25, 0.00, 6.0),
+    ("6/14 Pitch Forward (+25cm Y)", "ai", 0.40, 0.00, 0.25, 8.0),
+    ("7/14 Center Hover", "ai", 0.40, 0.00, 0.00, 6.0),
+    ("8/14 Pitch Back (-25cm Y)", "ai", 0.40, 0.00, -0.25, 8.0),
+    ("9/14 Center Hover", "ai", 0.40, 0.00, 0.00, 6.0),
+    ("10/14 Roll Right (+25cm X)", "ai", 0.40, 0.25, 0.00, 8.0),
+    ("11/14 Center Hover", "ai", 0.40, 0.00, 0.00, 6.0),
+    ("12/14 Roll Left (-25cm X)", "ai", 0.40, -0.25, 0.00, 8.0),
     ("13/14 Final Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 5.5),
     ("14/14 Soft Landing", "ai", 0.00, 0.00, 0.00, 4.5),
 ]
