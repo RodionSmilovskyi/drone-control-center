@@ -30,39 +30,76 @@ desired_shift_x = 0.0
 desired_shift_y = 0.0
 mode_lock = threading.Lock()
 
-# Indoor-safe maneuver test sequence:
+# Indoor-safe maneuver test sequence with smooth setpoint ramping:
+# Ramp rates prevent step-error integral windup (>8cm wall-unsticking boost) and vertical overshoot/undershoot.
+TEST_Z_RAMP_RATE_MS = 0.10   # 10 cm/s vertical setpoint ramp rate
+TEST_XY_RAMP_RATE_MS = 0.07  # 7 cm/s horizontal setpoint ramp rate
 # (step_label, mode, shift_z_meters, shift_x_meters, shift_y_meters, duration_seconds)
 TEST_SEQUENCE_STEPS = [
     ("1/14 Arming Motors", "armed", 0.40, 0.00, 0.00, 1.5),
-    ("2/14 Takeoff & Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 4.0),
-    ("3/14 Climb (+35cm -> 0.75m)", "ai", 0.75, 0.00, 0.00, 4.5),
-    ("4/14 Descend (-45cm -> 0.30m)", "ai", 0.30, 0.00, 0.00, 4.5),
-    ("5/14 Level Hover (0.45m)", "ai", 0.45, 0.00, 0.00, 3.5),
-    ("6/14 Pitch Forward (+35cm Y)", "ai", 0.45, 0.00, 0.35, 5.0),
-    ("7/14 Center Hover", "ai", 0.45, 0.00, 0.00, 4.0),
-    ("8/14 Pitch Back (-35cm Y)", "ai", 0.45, 0.00, -0.35, 5.0),
-    ("9/14 Center Hover", "ai", 0.45, 0.00, 0.00, 4.0),
-    ("10/14 Roll Right (+35cm X)", "ai", 0.45, 0.35, 0.00, 5.0),
-    ("11/14 Center Hover", "ai", 0.45, 0.00, 0.00, 4.0),
-    ("12/14 Roll Left (-35cm X)", "ai", 0.45, -0.35, 0.00, 5.0),
-    ("13/14 Final Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 3.5),
-    ("14/14 Soft Landing", "ai", 0.00, 0.00, 0.00, 2.5),
+    ("2/14 Takeoff & Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 4.5),
+    ("3/14 Climb (0.40m -> 0.62m)", "ai", 0.62, 0.00, 0.00, 5.0),
+    ("4/14 Descend (0.62m -> 0.28m)", "ai", 0.28, 0.00, 0.00, 5.5),
+    ("5/14 Level Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 4.0),
+    ("6/14 Pitch Forward (+25cm Y)", "ai", 0.40, 0.00, 0.25, 6.0),
+    ("7/14 Center Hover", "ai", 0.40, 0.00, 0.00, 5.5),
+    ("8/14 Pitch Back (-25cm Y)", "ai", 0.40, 0.00, -0.25, 6.0),
+    ("9/14 Center Hover", "ai", 0.40, 0.00, 0.00, 5.5),
+    ("10/14 Roll Right (+25cm X)", "ai", 0.40, 0.25, 0.00, 6.0),
+    ("11/14 Center Hover", "ai", 0.40, 0.00, 0.00, 5.5),
+    ("12/14 Roll Left (-25cm X)", "ai", 0.40, -0.25, 0.00, 6.0),
+    ("13/14 Final Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 5.5),
+    ("14/14 Soft Landing", "ai", 0.00, 0.00, 0.00, 4.5),
 ]
 test_seq_active = False
 test_seq_index = 0
 test_step_start_time = 0.0
+test_last_ramp_time = 0.0
 
 def apply_test_step(step_idx: int, pub_socket):
-    """Applies the mode and 3D shifts for the given test sequence step (caller holds mode_lock)."""
-    global current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_index, test_step_start_time
+    """Starts the given test sequence step; step<=1 latches initial hover setpoint, step>=2 ramps smoothly."""
+    global current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_index, test_step_start_time, test_last_ramp_time
     _, mode, sz_m, sx_m, sy_m, _ = TEST_SEQUENCE_STEPS[step_idx]
+    now = time.time()
     test_seq_index = step_idx
-    test_step_start_time = time.time()
+    test_step_start_time = now
+    test_last_ramp_time = now
+    mode_changed = (current_mode != mode)
     current_mode = mode
-    desired_shift_z = round(sz_m / MAX_ALTITUDE, 3)
-    desired_shift_x = round(sx_m, 2)
-    desired_shift_y = round(sy_m, 2)
-    publish_mode_cmd(pub_socket)
+    if step_idx <= 1:
+        desired_shift_z = round(sz_m / MAX_ALTITUDE, 3)
+        desired_shift_x = round(sx_m, 3)
+        desired_shift_y = round(sy_m, 3)
+        publish_mode_cmd(pub_socket)
+    elif mode_changed:
+        publish_mode_cmd(pub_socket)
+
+def update_test_sequence_ramp(pub_socket):
+    """Smoothly ramps desired_shift_{z,x,y} toward current step targets (caller holds mode_lock)."""
+    global desired_shift_z, desired_shift_x, desired_shift_y, test_last_ramp_time
+    now = time.time()
+    dt = min(max(now - test_last_ramp_time, 0.0), 0.25)
+    test_last_ramp_time = now
+    if test_seq_index <= 1 or dt <= 0.0:
+        return
+
+    _, _, sz_m, sx_m, sy_m, _ = TEST_SEQUENCE_STEPS[test_seq_index]
+    target_sz = sz_m / MAX_ALTITUDE
+    target_sx = sx_m
+    target_sy = sy_m
+
+    max_dz = (TEST_Z_RAMP_RATE_MS / MAX_ALTITUDE) * dt
+    max_dxy = TEST_XY_RAMP_RATE_MS * dt
+
+    new_sz = round(desired_shift_z + float(np.clip(target_sz - desired_shift_z, -max_dz, max_dz)), 3)
+    new_sx = round(desired_shift_x + float(np.clip(target_sx - desired_shift_x, -max_dxy, max_dxy)), 3)
+    new_sy = round(desired_shift_y + float(np.clip(target_sy - desired_shift_y, -max_dxy, max_dxy)), 3)
+
+    if new_sz != desired_shift_z or new_sx != desired_shift_x or new_sy != desired_shift_y:
+        desired_shift_z = new_sz
+        desired_shift_x = new_sx
+        desired_shift_y = new_sy
+        publish_mode_cmd(pub_socket)
 
 def publish_mode_cmd(pub_socket):
     """Sends current flight mode and desired 3D shifts via non-blocking ZMQ."""
@@ -429,6 +466,7 @@ def main():
                                     desired_shift_y = 0.0
                                     publish_mode_cmd(pub_socket)
                             if test_seq_active:
+                                update_test_sequence_ramp(pub_socket)
                                 rem = max(0.0, step_dur - elapsed)
                                 test_status = f"{step_label} ({rem:.1f}s)"
                         live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, desired_shift_z, desired_shift_x, desired_shift_y, test_status))
