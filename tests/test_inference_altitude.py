@@ -164,13 +164,13 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(rc[3], 1500)
 
     def test_cascaded_outer_loop_velocity_clamping(self):
-        # Verify outer loop clamps target velocity to +/- max_velocity (0.10 m/s) under large position steps
+        # Verify outer loop clamps target velocity to +/- max_velocity (0.16 m/s) under large position steps
         self.fc.reset()
         obs = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         # Large positive X shift step (+0.50m)
         handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.50, desired_shift_y=-0.50)
-        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.10, places=4)
-        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.10, places=4)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.16, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.16, places=4)
 
     def test_cascaded_wall_unsticking_preserves_trim_under_small_return_wiggles(self):
         # Regression test: when displaced at x = +0.15m with tiny leftward wiggles (vx = -0.02 m/s,
@@ -197,11 +197,11 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertLessEqual(rc[0], 1498)
 
     def test_cascaded_maneuver_no_integral_slingshot_and_stopping_distance_lead(self):
-        # Regression test for Entry 23:
-        # 1. Commanded +0.25m maneuver from rest must produce immediate P-authority (>= +4.0 PWM) without
+        # Regression test for Entry 23 & Entry 24:
+        # 1. Commanded +0.25m maneuver from rest must produce immediate P-authority (>= +7.0 PWM) without
         #    winding up > +2.0 PWM of integral slingshot.
-        # 2. When returning from a swing at x = -0.175m with vx = +0.25 m/s toward target 0.0m,
-        #    stopping-distance lead (pos_lead_tau = 0.70s) predicts x + 0.70 * vx = 0.0m -> lead_position_error = 0.0,
+        # 2. When returning from a swing at x = -0.0625m with vx = +0.25 m/s toward target 0.0m,
+        #    stopping-distance lead (pos_lead_tau = 0.25s) predicts x + 0.25 * vx = 0.0m -> lead_position_error = 0.0,
         #    zeroing outer-loop target_velocity BEFORE crossing 0.0m so the outer loop stops pushing into an overshoot!
         self.fc.reset()
         obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
@@ -209,17 +209,33 @@ class TestInferenceAltitude(unittest.TestCase):
 
         # Command +0.25m X maneuver from rest
         rc_step = handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.25, desired_shift_y=0.0)
-        self.assertGreaterEqual(rc_step[0], 1504, "25cm maneuver must immediately command >= +4 PWM tilt")
+        self.assertGreaterEqual(rc_step[0], 1507, "25cm maneuver must immediately command >= +7 PWM tilt")
 
-        # Returning from left swing at x = -0.175m with vx = +0.25 m/s (norm = +0.05) toward 0.0m:
-        # Without pos_lead_tau, target_velocity would be +0.10 m/s (pushing RIGHT into overshoot).
-        # With pos_lead_tau = 0.70s, lead_position_error = +0.175 - 0.70 * 0.25 = 0.0 -> target_velocity == 0.0!
+        # Returning from left swing at x = -0.0625m with vx = +0.25 m/s (norm = +0.05) toward 0.0m:
+        # With pos_lead_tau = 0.25s, lead_position_error = +0.0625 - 0.25 * 0.25 = 0.0 -> target_velocity == 0.0!
         self.fc.reset()
         handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
-        obs_return_swing = np.array([0.4, 1.5, -0.175, 0.0, 0.05, 0.0, 101.0], dtype=np.float64)
+        obs_return_swing = np.array([0.4, 1.5, -0.0625, 0.0, 0.05, 0.0, 101.0], dtype=np.float64)
         rc_brake = handle_ai(obs_return_swing, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
         self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.0, places=4)
-        self.assertLess(rc_brake[0], 1492, "Must command strong leftward braking (< 1492 PWM) 17.5cm before crossing origin")
+        self.assertLess(rc_brake[0], 1490, "Must command strong leftward braking (< 1490 PWM) before crossing origin")
+
+    def test_cascaded_directional_d_guard_prevents_turnaround_cancellation(self):
+        # Regression test for Entry 24: at a turnaround peak (e.g. x = -0.25m, target = 0.0m,
+        # where vx transitions from -0.02 m/s to +0.02 m/s), dv/dt > 0 causes raw derivative (-dv/dt) < 0.
+        # Directional D-term guard must zero opposing D when it opposes BOTH position_error and velocity_error,
+        # ensuring Roll commands strong positive restoring tilt (>= 1506 PWM) instead of tilting left (< 1500 PWM).
+        self.fc.reset()
+        obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        obs_pre_turn = np.array([0.4, 1.5, -0.25, 0.0, -0.004, 0.0, 100.033], dtype=np.float64)
+        handle_ai(obs_pre_turn, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        obs_post_turn = np.array([0.4, 1.5, -0.25, 0.0, 0.004, 0.0, 100.066], dtype=np.float64)
+        rc_turn = handle_ai(obs_post_turn, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        self.assertEqual(self.fc.roll_controller.vel_pid.derivative, 0.0)
+        self.assertGreaterEqual(rc_turn[0], 1506, "At -0.25m turnaround peak, Roll must tilt right (>= 1506 PWM)")
 
     def test_cascaded_no_swing_integral_slingshot(self):
         # Regression test for Entry 20: when swinging away from origin at |vx| > 0.04 m/s (e.g. vx = -0.15 m/s
@@ -251,13 +267,13 @@ class TestInferenceAltitude(unittest.TestCase):
         handle_ai(obs_pre_bounce, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
         self.fc.roll_controller.vel_pid.derivative = 0.0
 
-        # Frame 2: abrupt wall rebound vx = +0.10 m/s (norm = +0.02) in 0.033s (raw dv/dt = +13.6 m/s^2)
-        obs_post_bounce = np.array([0.4, 1.5, -0.25, 0.0, 0.02, 0.0, 100.066], dtype=np.float64)
+        # Frame 2: abrupt wall rebound vx = +0.25 m/s (norm = +0.05) in 0.033s (raw dv/dt = +18.2 m/s^2)
+        obs_post_bounce = np.array([0.4, 1.5, -0.25, 0.0, 0.05, 0.0, 100.066], dtype=np.float64)
         handle_ai(obs_post_bounce, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
 
         d_pwm = abs(100.0 * self.fc.roll_controller.vel_pid.Kd * self.fc.roll_controller.vel_pid.derivative)
-        self.assertLessEqual(d_pwm, 6.0)
-        self.assertGreater(d_pwm, 2.0)
+        self.assertLessEqual(d_pwm, 3.0)
+        self.assertGreater(d_pwm, 0.5)
 
     def test_cascaded_return_braking_anti_windup(self):
         # Verify that when returning toward origin, the inner trim integral unwinds any wall-unsticking push

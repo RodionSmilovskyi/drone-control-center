@@ -33,7 +33,7 @@ mode_lock = threading.Lock()
 # Indoor-safe maneuver test sequence with smooth setpoint ramping:
 # Ramp rates smoothly lead vertical and horizontal maneuvers without abrupt derivative spikes.
 TEST_Z_RAMP_RATE_MS = 0.10   # 10 cm/s vertical setpoint ramp rate
-TEST_XY_RAMP_RATE_MS = 0.12  # 12 cm/s horizontal setpoint ramp rate (matches 0.09 m/s cruise speed without overshoot)
+TEST_XY_RAMP_RATE_MS = 0.25  # 25 cm/s horizontal setpoint ramp rate (1.0s ramp to +/-0.25m so setpoint leads drone cleanly)
 # (step_label, mode, shift_z_meters, shift_x_meters, shift_y_meters, duration_seconds)
 TEST_SEQUENCE_STEPS = [
     ("1/14 Arming Motors", "armed", 0.40, 0.00, 0.00, 1.5),

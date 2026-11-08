@@ -17,17 +17,17 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.42,
-        max_velocity: float = 0.10,
-        kp_vel: float = 0.40,
+        kp_pos: float = 0.55,
+        max_velocity: float = 0.16,
+        kp_vel: float = 0.55,
         ki_vel: float = 0.08,
-        kd_vel: float = 0.24,
+        kd_vel: float = 0.06,
         integral_limit: float = 0.25,
         integral_min: float = -0.25,
-        d_alpha: float = 0.32,
+        d_alpha: float = 0.25,
         max_integral_vel_error: float = 0.05,
-        max_d_accel: float = 0.75,
-        pos_lead_tau: float = 0.70,
+        max_d_accel: float = 0.50,
+        pos_lead_tau: float = 0.25,
     ):
         self.kp_pos = kp_pos
         self.max_velocity = max_velocity
@@ -117,4 +117,12 @@ class CascadedAxisController:
 
         # Inner Loop: Velocity P+D + managed I control
         vel_pid_out = self.vel_pid.compute(current_vel, dt, enable_integral=False)
+        # Directional D-term guard against turnaround cancellation & anti-braking:
+        # When D-term (Kd * derivative) opposes BOTH position_error and velocity_error,
+        # it is either cancelling restoring pull at a turnaround peak (where v ~ 0 and dv/dt points
+        # toward target) or opposing proportional braking during deceleration toward a waypoint.
+        d_term = self.vel_pid.Kd * self.vel_pid.derivative
+        if d_term * self.position_error < 0.0 and d_term * self.velocity_error < 0.0:
+            vel_pid_out -= d_term
+            self.vel_pid.derivative = 0.0
         return vel_pid_out

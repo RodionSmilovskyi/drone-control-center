@@ -12,43 +12,40 @@ class FlightController:
         
         # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
         # Outer loop maps stopping-distance-predicted position error (pos_error - pos_lead_tau * current_vel,
-        # pos_lead_tau=0.70s) to desired velocity (kp_pos=0.42, clamped to max_velocity = 0.10 m/s).
-        # Inner loop maps velocity error to corrective tilt PWM via phase-lead-compensated PID
-        # (Kp=0.40, Ki=0.08, Kd=0.24, d_alpha=0.32, max_d_accel=0.75 m/s^2):
-        #   - Stopping-distance position lead (pos_lead_tau=0.70s) zeroes outer-loop target_velocity when the drone is
-        #     0.70s away from crossing the target on a return swing or waypoint approach, preventing the outer position
-        #     push from cancelling inner-loop D-term phase lead prior to zero-crossing.
-        #   - Bounded approach speed (max_velocity=0.10 m/s) + gentle proportional braking (kp_vel=0.40) eliminates the
-        #     -8 to -15 PWM reverse-tilt braking pulse during +/-25cm shifts that previously caused the drone to swing
-        #     back toward origin while the shift command was still held.
-        #   - Expanded derivative phase lead tau_d = Kd/Kp = 0.24/0.40 = 0.60s compensates the slow horizontal plant lag
-        #     and damps the 5.4s Roll oscillation mode by >85% without high-frequency noise amplification.
+        # pos_lead_tau=0.25s) to desired velocity (kp_pos=0.55, clamped to max_velocity = 0.16 m/s -> +/-8.8 PWM max position pull).
+        # Inner loop maps velocity error to corrective tilt PWM via directional-D velocity PID
+        # (Kp=0.55, Ki=0.08, Kd=0.06, d_alpha=0.25, max_d_accel=0.50 m/s^2):
+        #   - Restored linear position stiffness (K_P = 30.25 PWM/m, +/-8.8 PWM max pull) paired with moderated
+        #     Kd=0.06 and directional D-term gating ensures positive turnaround stiffness (K_P - w^2 K_A = +22.3 PWM/m > 0)
+        #     and prevents D from ever cancelling restoring pull at turnaround peaks or opposing braking when slowing at waypoints.
+        #   - Moderate stopping-distance lead (pos_lead_tau=0.25s) initiates smooth braking 4cm before arrival without
+        #     prematurely stalling target_velocity mid-maneuver.
         #   - Pure stationary-gated trim Ki=0.08 (limit +/-0.25 -> +/-2.0 PWM) learns true hover trim without integral slingshot.
         self.roll_controller = CascadedAxisController(
-            kp_pos=0.42,
-            max_velocity=0.10,
-            kp_vel=0.40,
+            kp_pos=0.55,
+            max_velocity=0.16,
+            kp_vel=0.55,
             ki_vel=0.08,
-            kd_vel=0.24,
+            kd_vel=0.06,
             integral_limit=0.25,
             integral_min=-0.25,
-            d_alpha=0.32,
+            d_alpha=0.25,
             max_integral_vel_error=0.05,
-            max_d_accel=0.75,
-            pos_lead_tau=0.70,
+            max_d_accel=0.50,
+            pos_lead_tau=0.25,
         )
         self.pitch_controller = CascadedAxisController(
-            kp_pos=0.42,
-            max_velocity=0.10,
-            kp_vel=0.40,
+            kp_pos=0.55,
+            max_velocity=0.16,
+            kp_vel=0.55,
             ki_vel=0.08,
-            kd_vel=0.24,
+            kd_vel=0.06,
             integral_limit=0.25,
             integral_min=-0.25,
-            d_alpha=0.32,
+            d_alpha=0.25,
             max_integral_vel_error=0.05,
-            max_d_accel=0.75,
-            pos_lead_tau=0.70,
+            max_d_accel=0.50,
+            pos_lead_tau=0.25,
         )
         # Backwards-compatible aliases to inner velocity PIDController objects
         self.roll_pid = self.roll_controller.vel_pid
