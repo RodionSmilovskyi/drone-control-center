@@ -135,9 +135,10 @@ drone-control-center/
 A terminal user interface implemented with **Rich**:
 - **Startup Lifecycle:** Automatically truncates all `.log` files in `logs/` upon start so session telemetry and service logs start completely from scratch.
 - **Keyboard Handling:** Non-blocking raw input thread:
-  - `a`: Switch to `armed`
-  - `d`: Switch to `disarmed`
-  - `x`: Switch to `ai` (autonomous hover/flight)
+  - `a`: Switch to `armed` (cancels active test sequence)
+  - `d`: Switch to `disarmed` (immediately aborts active test sequence and disarms)
+  - `x`: Switch to `ai` (autonomous hover/flight; cancels active test sequence)
+  - `t`: Launch / toggle the **Indoor Maneuver Test Sequence** (`TEST_SEQUENCE_STEPS`). Executes a bounded 14-step (`46.0s` total) automated sequence inside the main 10 Hz loop without extra threads: Arming Motors (`armed`, `1.5s`) $\rightarrow$ Takeoff & Hover (`0.40m`, `4.0s`) $\rightarrow$ Climb (`0.55m`, `3.5s`) $\rightarrow$ Descend (`0.25m`, `3.5s`) $\rightarrow$ Level Hover (`0.40m`, `3.0s`) $\rightarrow$ Pitch Forward (`+0.15m Y`, `4.0s`) $\rightarrow$ Center (`3.0s`) $\rightarrow$ Pitch Back (`-0.15m Y`, `4.0s`) $\rightarrow$ Center (`3.0s`) $\rightarrow$ Roll Right (`+0.15m X`, `4.0s`) $\rightarrow$ Center (`3.0s`) $\rightarrow$ Roll Left (`-0.15m X`, `4.0s`) $\rightarrow$ Final Hover (`0.40m`, `3.0s`) $\rightarrow$ Soft Landing (`0.00m`, `2.5s`) $\rightarrow$ `disarmed`. Pressing `t` again (or any mode/shift key) immediately cancels the sequence.
   - `w`: Increment `desired_shift_z` by `+0.017` (`+0.05m / 3.0m`, clamped to `1.0`)
   - `s`: Decrement `desired_shift_z` by `-0.017` (`-0.05m / 3.0m`, clamped to `-1.0`)
   - `i`: Increment `desired_shift_y` by `+0.05` (+5cm forward pitch shift, clamped to `1.0`)
@@ -149,7 +150,7 @@ A terminal user interface implemented with **Rich**:
   - **Statuses:** Real-time health monitoring of all 3 microservices based on shared memory heartbeat threshold (< 1.0s = OK).
   - **Live Sensor Data:** Altitude, X/Y drift, normalized velocity, and heartbeat latency.
   - **RC Commands:** Active pulse-width values dispatched to the flight controller.
-  - **System Status:** Prominently displays current flight mode (`DISARMED`, `ARMED`, `AI`), active vertical shift (`Shift Z: +X.XXX (+X.XXm)`), horizontal shift targets (`Shift X/Y: +0.00, +0.00`), and RC pulse summary.
+  - **System Status:** Prominently displays current flight mode (`DISARMED`, `ARMED`, `AI`), active vertical shift (`Shift Z: +X.XXX (+X.XXm)`), horizontal shift targets (`Shift X/Y: +0.00, +0.00`), active test sequence step & countdown (`Test Seq: ...`), and RC pulse summary.
 
 ---
 

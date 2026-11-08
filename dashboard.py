@@ -24,10 +24,45 @@ current_mode = "disarmed"
 MAX_ALTITUDE = 3.0
 SHIFT_Z_STEP = round(0.05 / MAX_ALTITUDE, 3)  # ~0.017 (+5cm per step)
 SHIFT_XY_STEP = 0.05  # +0.05m (+5cm per step)
-desired_shift_z = round(0.4 / MAX_ALTITUDE, 3)  # +0.133 (+0.40m default vertical shift)
+DEFAULT_SHIFT_Z = round(0.4 / MAX_ALTITUDE, 3)  # +0.133 (+0.40m default vertical shift)
+desired_shift_z = DEFAULT_SHIFT_Z
 desired_shift_x = 0.0
 desired_shift_y = 0.0
 mode_lock = threading.Lock()
+
+# Indoor-safe maneuver test sequence:
+# (step_label, mode, shift_z_meters, shift_x_meters, shift_y_meters, duration_seconds)
+TEST_SEQUENCE_STEPS = [
+    ("1/14 Arming Motors", "armed", 0.40, 0.00, 0.00, 1.5),
+    ("2/14 Takeoff & Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 4.0),
+    ("3/14 Climb (+15cm -> 0.55m)", "ai", 0.55, 0.00, 0.00, 3.5),
+    ("4/14 Descend (-15cm -> 0.25m)", "ai", 0.25, 0.00, 0.00, 3.5),
+    ("5/14 Level Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 3.0),
+    ("6/14 Pitch Forward (+15cm Y)", "ai", 0.40, 0.00, 0.15, 4.0),
+    ("7/14 Center Hover", "ai", 0.40, 0.00, 0.00, 3.0),
+    ("8/14 Pitch Back (-15cm Y)", "ai", 0.40, 0.00, -0.15, 4.0),
+    ("9/14 Center Hover", "ai", 0.40, 0.00, 0.00, 3.0),
+    ("10/14 Roll Right (+15cm X)", "ai", 0.40, 0.15, 0.00, 4.0),
+    ("11/14 Center Hover", "ai", 0.40, 0.00, 0.00, 3.0),
+    ("12/14 Roll Left (-15cm X)", "ai", 0.40, -0.15, 0.00, 4.0),
+    ("13/14 Final Hover (0.40m)", "ai", 0.40, 0.00, 0.00, 3.0),
+    ("14/14 Soft Landing", "ai", 0.00, 0.00, 0.00, 2.5),
+]
+test_seq_active = False
+test_seq_index = 0
+test_step_start_time = 0.0
+
+def apply_test_step(step_idx: int, pub_socket):
+    """Applies the mode and 3D shifts for the given test sequence step (caller holds mode_lock)."""
+    global current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_index, test_step_start_time
+    _, mode, sz_m, sx_m, sy_m, _ = TEST_SEQUENCE_STEPS[step_idx]
+    test_seq_index = step_idx
+    test_step_start_time = time.time()
+    current_mode = mode
+    desired_shift_z = round(sz_m / MAX_ALTITUDE, 3)
+    desired_shift_x = round(sx_m, 2)
+    desired_shift_y = round(sy_m, 2)
+    publish_mode_cmd(pub_socket)
 
 def publish_mode_cmd(pub_socket):
     """Sends current flight mode and desired 3D shifts via non-blocking ZMQ."""
@@ -37,7 +72,10 @@ def publish_mode_cmd(pub_socket):
         "shift_x": round(desired_shift_x, 3),
         "shift_y": round(desired_shift_y, 3),
     })
-    pub_socket.send_string(payload)
+    try:
+        pub_socket.send_string(payload, flags=zmq.NOBLOCK)
+    except zmq.Again:
+        pass
 
 def signal_handler(sig, frame):
     global shutting_down
@@ -105,8 +143,9 @@ def get_mode_panel(
     shift_z: float,
     shift_x: float = 0.0,
     shift_y: float = 0.0,
+    test_status: str = "",
 ) -> Panel:
-    """Creates a panel displaying the current operating mode, desired 3D shifts, and RC summary."""
+    """Creates a panel displaying the current operating mode, desired 3D shifts, test sequence state, and RC summary."""
     mode_colors = {
         "disarmed": "bold red",
         "armed": "bold green",
@@ -117,10 +156,14 @@ def get_mode_panel(
     mode_text = Text(f"{mode.upper()}", style=f"{color} underline")
     shift_z_text = Text(f"\nShift Z: {shift_z:+.3f} ({shift_z * MAX_ALTITUDE:+.2f}m)", style="bold cyan")
     shift_xy_text = Text(f"\nShift X/Y: {shift_x:+.2f}, {shift_y:+.2f}", style="cyan")
-    controls_hint = Text("\nw/s: Alt ±5cm | i/k: Pitch ±5cm | j/l: Roll ±5cm", style="dim")
+    if test_status:
+        test_text = Text(f"\nTest Seq: {test_status}", style="bold magenta")
+    else:
+        test_text = Text("\nTest Seq: Idle (press 't' to run)", style="dim")
+    controls_hint = Text("\na/d/x: Mode | t: Test Seq | w/s: Alt | i/k: Pitch | j/l: Roll", style="dim")
     rc_summary = Text(f"\nRC: {rc_commands[:4]}", style="dim")
     
-    content = Text.assemble("\n", mode_text, "\n", shift_z_text, shift_xy_text, "\n", controls_hint, "\n", rc_summary)
+    content = Text.assemble("\n", mode_text, "\n", shift_z_text, shift_xy_text, test_text, "\n", controls_hint, "\n", rc_summary)
     
     return Panel(content, title="[bold]System Status[/bold]", border_style=color.split()[-1], title_align="center")
 
@@ -132,6 +175,7 @@ def generate_dashboard(
     shift_z: float = 0.133,
     shift_x: float = 0.0,
     shift_y: float = 0.0,
+    test_status: str = "",
     is_exiting: bool = False,
 ) -> Panel:
     """Generates the full dashboard panel."""
@@ -146,7 +190,7 @@ def generate_dashboard(
     status_table = get_status_table(heartbeats)
     sensor_table = get_sensor_table(sensor_data)
     rc_table = get_rc_table(rc_commands)
-    mode_panel = get_mode_panel(mode, rc_commands, shift_z, shift_x, shift_y)
+    mode_panel = get_mode_panel(mode, rc_commands, shift_z, shift_x, shift_y, test_status)
     
     system_ok = (heartbeats[0] > 0 and (time.time() - heartbeats[0]) < 1.0) and \
                 (heartbeats[1] > 0 and (time.time() - heartbeats[1]) < 1.0) and \
@@ -177,7 +221,7 @@ def generate_dashboard(
 
 def keyboard_listener(pub_socket):
     """Background thread to handle keyboard input."""
-    global current_mode, desired_shift_z, desired_shift_x, desired_shift_y, shutting_down
+    global current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_active, shutting_down
     while not shutting_down:
         try:
             # sys.stdin.read(1) will block in this thread, which is fine
@@ -193,28 +237,45 @@ def keyboard_listener(pub_socket):
                 new_mode = "disarmed"
             elif char_lower == 'x':
                 new_mode = "ai"
+            elif char_lower == 't':
+                with mode_lock:
+                    if not test_seq_active:
+                        test_seq_active = True
+                        apply_test_step(0, pub_socket)
+                    else:
+                        test_seq_active = False
+                        desired_shift_z = DEFAULT_SHIFT_Z
+                        desired_shift_x = 0.0
+                        desired_shift_y = 0.0
+                        publish_mode_cmd(pub_socket)
             elif char_lower == 'w':
                 with mode_lock:
+                    test_seq_active = False
                     desired_shift_z = min(1.0, round(desired_shift_z + SHIFT_Z_STEP, 3))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 's':
                 with mode_lock:
+                    test_seq_active = False
                     desired_shift_z = max(-1.0, round(desired_shift_z - SHIFT_Z_STEP, 3))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'i':
                 with mode_lock:
+                    test_seq_active = False
                     desired_shift_y = min(1.0, round(desired_shift_y + SHIFT_XY_STEP, 2))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'k':
                 with mode_lock:
+                    test_seq_active = False
                     desired_shift_y = max(-1.0, round(desired_shift_y - SHIFT_XY_STEP, 2))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'j':
                 with mode_lock:
+                    test_seq_active = False
                     desired_shift_x = max(-1.0, round(desired_shift_x - SHIFT_XY_STEP, 2))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'l':
                 with mode_lock:
+                    test_seq_active = False
                     desired_shift_x = min(1.0, round(desired_shift_x + SHIFT_XY_STEP, 2))
                     publish_mode_cmd(pub_socket)
             elif char_lower == 'q':
@@ -223,7 +284,13 @@ def keyboard_listener(pub_socket):
             
             if new_mode:
                 with mode_lock:
-                    if current_mode != new_mode:
+                    was_testing = test_seq_active
+                    test_seq_active = False
+                    if was_testing:
+                        desired_shift_z = DEFAULT_SHIFT_Z
+                        desired_shift_x = 0.0
+                        desired_shift_y = 0.0
+                    if current_mode != new_mode or was_testing:
                         current_mode = new_mode
                         publish_mode_cmd(pub_socket)
         except Exception:
@@ -297,7 +364,7 @@ def main():
             shm_mgr = None
             hb_shm_mgr = None
             try:
-                global shutting_down
+                global shutting_down, current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_active
                 while not shutting_down:
                     # 1. Non-blocking read RC commands
                     try:
@@ -345,7 +412,26 @@ def main():
                             hb_shm_mgr = None
                     
                     with mode_lock:
-                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, desired_shift_z, desired_shift_x, desired_shift_y))
+                        test_status = ""
+                        if test_seq_active:
+                            step_label, _, _, _, _, step_dur = TEST_SEQUENCE_STEPS[test_seq_index]
+                            elapsed = time.time() - test_step_start_time
+                            if elapsed >= step_dur:
+                                if test_seq_index + 1 < len(TEST_SEQUENCE_STEPS):
+                                    apply_test_step(test_seq_index + 1, pub_socket)
+                                    step_label, _, _, _, _, step_dur = TEST_SEQUENCE_STEPS[test_seq_index]
+                                    elapsed = 0.0
+                                else:
+                                    test_seq_active = False
+                                    current_mode = "disarmed"
+                                    desired_shift_z = DEFAULT_SHIFT_Z
+                                    desired_shift_x = 0.0
+                                    desired_shift_y = 0.0
+                                    publish_mode_cmd(pub_socket)
+                            if test_seq_active:
+                                rem = max(0.0, step_dur - elapsed)
+                                test_status = f"{step_label} ({rem:.1f}s)"
+                        live.update(generate_dashboard(sensor_data, heartbeats, current_mode, rc_commands, desired_shift_z, desired_shift_x, desired_shift_y, test_status))
                     time.sleep(0.1)
                 
                 # Show shutdown message
