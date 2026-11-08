@@ -17,15 +17,15 @@ class CascadedAxisController:
     """
     def __init__(
         self,
-        kp_pos: float = 0.25,
-        max_velocity: float = 0.06,
-        kp_vel: float = 0.55,
-        ki_vel: float = 0.30,
+        kp_pos: float = 0.50,
+        max_velocity: float = 0.14,
+        kp_vel: float = 0.50,
+        ki_vel: float = 0.08,
         kd_vel: float = 0.18,
-        integral_limit: float = 0.35,
-        integral_min: float = -0.35,
+        integral_limit: float = 0.25,
+        integral_min: float = -0.25,
         d_alpha: float = 0.35,
-        max_integral_vel_error: float = 0.06,
+        max_integral_vel_error: float = 0.05,
         max_d_accel: float = 0.80,
     ):
         self.kp_pos = kp_pos
@@ -71,15 +71,16 @@ class CascadedAxisController:
         self.vel_pid.setpoint = self.target_velocity
         self.velocity_error = self.target_velocity - current_vel
         
-        # Anti-slingshot, stationary-gated trim & wall-unsticking integral update:
-        # 1. Separate static trim/wall-stall from dynamic swing momentum:
-        #    - When nearly stationary (|current_vel| <= 0.04 m/s), velocity error reflects true hover bias
-        #      or wall stall (with a 2.5x unsticking boost when displaced > 8cm).
+        # Anti-slingshot, stationary-gated trim integral update:
+        # 1. Separate static hover trim from dynamic swing / maneuver momentum:
+        #    - When nearly stationary (|current_vel| <= 0.04 m/s and |a| <= 0.20 m/s^2), velocity error reflects
+        #      true static hover bias (~0.4 PWM), integrating smoothly without any step-error boost that could
+        #      slingshot commanded +/-25cm maneuvers 180 deg out of phase.
         #    - When actively moving (|current_vel| > 0.04 m/s), unwind any wrong-sign integral that is
         #      propelling the overshoot (3.0x), and do NOT wind up on transient swing momentum away from target.
         # 2. When moving toward target faster than target_velocity (position_error * velocity_error < 0),
         #    freeze opposing (braking) windup and briskly unwind return-direction integral toward 0 so P-braking
-        #    is never overpowered by stale unsticking integral.
+        #    is never opposed by stale integral.
         if enable_integral:
             clamped_vel_err = float(np.clip(self.velocity_error, -self.max_integral_vel_error, self.max_integral_vel_error))
             if self.position_error * self.velocity_error >= 0.0:
@@ -87,13 +88,9 @@ class CascadedAxisController:
                     # Integral has the wrong sign (actively pushing against velocity_error): unwind fast
                     self.vel_pid.integral += 3.0 * clamped_vel_err * dt
                 elif abs(current_vel) <= 0.04 and abs(self.vel_pid.derivative) <= 0.20:
-                    # Stationary / low-speed hover or genuine wall stall (|v| <= 4 cm/s and low acceleration |a| <= 0.20 m/s^2,
+                    # Stationary / low-speed hover (|v| <= 4 cm/s and low acceleration |a| <= 0.20 m/s^2,
                     # excluding dynamic swing turnaround peaks where v briefly crosses 0 under high acceleration):
-                    if abs(self.position_error) > 0.08 and abs(current_vel) <= 0.03:
-                        unstick_step = float(np.sign(clamped_vel_err)) * max(abs(clamped_vel_err), 0.05)
-                        self.vel_pid.integral += 4.0 * unstick_step * dt
-                    else:
-                        self.vel_pid.integral += clamped_vel_err * dt
+                    self.vel_pid.integral += clamped_vel_err * dt
                 elif self.position_error * current_vel >= 0.0 and abs(self.vel_pid.derivative) <= 0.20:
                     # Creeping slowly toward target (between 4 cm/s and target_velocity): gentle trim update
                     self.vel_pid.integral += 0.15 * clamped_vel_err * dt

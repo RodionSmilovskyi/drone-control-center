@@ -164,18 +164,19 @@ class TestInferenceAltitude(unittest.TestCase):
         self.assertEqual(rc[3], 1500)
 
     def test_cascaded_outer_loop_velocity_clamping(self):
-        # Verify outer loop clamps target velocity to +/- max_velocity (0.06 m/s) under large position steps
+        # Verify outer loop clamps target velocity to +/- max_velocity (0.14 m/s) under large position steps
         self.fc.reset()
         obs = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         # Large positive X shift step (+0.50m)
         handle_ai(obs, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.50, desired_shift_y=-0.50)
-        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.06, places=4)
-        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.06, places=4)
+        self.assertAlmostEqual(self.fc.roll_controller.target_velocity, 0.14, places=4)
+        self.assertAlmostEqual(self.fc.pitch_controller.target_velocity, -0.14, places=4)
 
     def test_cascaded_wall_unsticking_preserves_trim_under_small_return_wiggles(self):
-        # Regression test: when pinned at x = +0.15m with tiny leftward wiggles (vx = -0.02 m/s,
-        # which is slower than target_velocity = -0.042 m/s), integral must CONTINUE building negative trim
-        # rather than unwinding to 0, reaching < -5.5 PWM (Roll <= 1490 PWM) to overcome trim + wall suction.
+        # Regression test: when displaced at x = +0.15m with tiny leftward wiggles (vx = -0.02 m/s,
+        # which is slower than target_velocity = -0.075 m/s), integral must CONTINUE building negative trim
+        # rather than unwinding to 0, while outer P-authority + gentle trim bounded within +/-2.0 PWM
+        # pulls Roll left (<= 1496 PWM) without winding up a 4.0x slingshot during +/-25cm maneuvers.
         self.fc.reset()
         obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
         handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
@@ -188,10 +189,36 @@ class TestInferenceAltitude(unittest.TestCase):
             self.assertLessEqual(self.fc.roll_controller.vel_pid.integral, prev_integral)
             prev_integral = self.fc.roll_controller.vel_pid.integral
 
-        # Integral contribution (100 * Ki * integral) must exceed -5.5 PWM and Roll must pull strongly left (<= 1490 PWM)
+        # Integral contribution (100 * Ki * integral) must stay bounded within [-2.0, -0.5] PWM (no slingshot)
+        # while outer P + I pulls Roll decidedly left (<= 1497 PWM).
         i_pwm = 100.0 * self.fc.roll_controller.vel_pid.Ki * self.fc.roll_controller.vel_pid.integral
-        self.assertLess(i_pwm, -5.5)
-        self.assertLessEqual(rc[0], 1490)
+        self.assertLess(i_pwm, -0.5)
+        self.assertGreaterEqual(i_pwm, -2.0)
+        self.assertLessEqual(rc[0], 1497)
+
+    def test_cascaded_maneuver_no_integral_slingshot_and_turnaround_dominance(self):
+        # Regression test for Entry 22:
+        # 1. Commanded +0.25m maneuver from rest must produce immediate P-authority (>= +6.0 PWM) without
+        #    winding up > +2.0 PWM of integral slingshot.
+        # 2. At a turnaround peak (x = -0.25m, vx = 0, decelerating with derivative = +0.30 m/s^2),
+        #    outer position restoring pull (+7.0 PWM) must dominate inner D-term (-5.4 PWM) so net command
+        #    still tilts toward target (> 1500 PWM).
+        self.fc.reset()
+        obs_origin = np.array([0.4, 1.5, 0.0, 0.0, 0.0, 0.0, 100.0], dtype=np.float64)
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+
+        # Command +0.25m X maneuver from rest
+        rc_step = handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.25, desired_shift_y=0.0)
+        self.assertGreaterEqual(rc_step[0], 1506, "25cm maneuver must immediately command >= +6 PWM tilt")
+
+        # Turnaround peak at x = -0.25m, vx = 0, with filtered derivative = +0.30 m/s^2 opposing return
+        self.fc.reset()
+        handle_ai(obs_origin, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        obs_turnaround = np.array([0.4, 1.5, -0.25, 0.0, 0.0, 0.0, 101.0], dtype=np.float64)
+        handle_ai(obs_turnaround, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
+        self.fc.roll_controller.vel_pid.derivative = 0.30
+        out = self.fc.roll_controller.compute(-0.25, 0.0, 0.033, target_pos=0.0, enable_integral=False)
+        self.assertGreater(100.0 * out, 1.0, "Position pull (+7.0 PWM) must dominate turnaround D-term (-5.4 PWM)")
 
     def test_cascaded_no_swing_integral_slingshot(self):
         # Regression test for Entry 20: when swinging away from origin at |vx| > 0.04 m/s (e.g. vx = -0.15 m/s
@@ -240,7 +267,7 @@ class TestInferenceAltitude(unittest.TestCase):
 
         # 1. Drone is stalled at x = +0.16m (vx = 0) -> accumulates negative integral to push left toward 0
         obs_stalled = np.array([0.4, 1.5, 0.16, 0.0, 0.0, 0.0, 101.0], dtype=np.float64)
-        for _ in range(30):
+        for _ in range(35):
             handle_ai(obs_stalled, self.fc, dt=0.033, desired_shift_z=0.0, desired_shift_x=0.0, desired_shift_y=0.0)
         self.assertLess(self.fc.roll_controller.vel_pid.integral, -0.05)
 

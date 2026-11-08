@@ -31,9 +31,9 @@ desired_shift_y = 0.0
 mode_lock = threading.Lock()
 
 # Indoor-safe maneuver test sequence with smooth setpoint ramping:
-# Ramp rates prevent step-error integral windup (>8cm wall-unsticking boost) and vertical overshoot/undershoot.
+# Ramp rates smoothly lead vertical and horizontal maneuvers without abrupt derivative spikes.
 TEST_Z_RAMP_RATE_MS = 0.10   # 10 cm/s vertical setpoint ramp rate
-TEST_XY_RAMP_RATE_MS = 0.07  # 7 cm/s horizontal setpoint ramp rate
+TEST_XY_RAMP_RATE_MS = 0.15  # 15 cm/s horizontal setpoint ramp rate (reaches +/-25cm in 1.67s of 6.0s step)
 # (step_label, mode, shift_z_meters, shift_x_meters, shift_y_meters, duration_seconds)
 TEST_SEQUENCE_STEPS = [
     ("1/14 Arming Motors", "armed", 0.40, 0.00, 0.00, 1.5),

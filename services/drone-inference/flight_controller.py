@@ -11,39 +11,40 @@ class FlightController:
         self.throttle_pid = PIDController(Kp=5.2, Ki=1.8, Kd=2.2, integral_limit=1.35, integral_min=-0.35, d_alpha=0.6)
         
         # 2-Stage Cascaded Position -> Velocity Controllers (PX4/ArduPilot style) for horizontal axes:
-        # Outer loop maps position error to desired velocity (kp_pos=0.25, clamped to max_velocity = 0.06 m/s).
+        # Outer loop maps position error to desired velocity (kp_pos=0.50, clamped to max_velocity = 0.14 m/s).
         # Inner loop maps velocity error to corrective tilt PWM via phase-lead-compensated PID
-        # (Kp=0.55, Ki=0.30, Kd=0.18, d_alpha=0.35, max_d_accel=0.80 m/s^2):
-        #   - Sub-critical velocity gain Kp=0.55 (55 PWM/(m/s)) + gentle position spring (13.75 PWM/m) prevents
-        #     return-braking pulses from over-accelerating the rebound across origin.
-        #   - Derivative phase lead tau_d = Kd/Kp = 0.18/0.55 = 0.33s compensates the ~0.33s sensor/actuator delay,
-        #     leveling wings before velocity turnaround so swings decay at 0.39x per half-cycle.
+        # (Kp=0.50, Ki=0.08, Kd=0.18, d_alpha=0.35, max_d_accel=0.80 m/s^2):
+        #   - Matched position authority (kp_pos=0.50, max_velocity=0.14 m/s -> 25.0 PWM/m stiffness, +/-7.0 PWM max pull)
+        #     ensures outer-loop restoring pull exceeds turnaround D-term (Kp_pos*Kp_vel = 0.250 > w^2*Kd_vel) and tracks
+        #     +/-25cm waypoint maneuvers promptly within ~3.0s without sustained 5.95s limit-cycle oscillations.
+        #   - Derivative phase lead tau_d = Kd/Kp = 0.18/0.50 = 0.36s compensates the sensor/actuator delay,
+        #     placing closed-loop poles at s = -0.73 +/- 1.64j and s = -0.79 +/- 0.74j (0.24x half-cycle decay).
         #   - Physical acceleration clamp max_d_accel=0.80 m/s^2 bounds D-term to <= 14.4 PWM (<= 5.0 PWM single-frame
-        #     step), completely preventing wall-bounce acceleration spikes (-70/+58 PWM) while remaining linear in flight.
-        #   - Stationary-and-low-acceleration-gated Ki=0.30 (limit +/-0.35 -> +/-10.5 PWM) learns static trim and
-        #     unsticks wall stalls without firing at dynamic swing turnaround peaks.
+        #     step), completely preventing wall-bounce acceleration spikes while remaining linear in flight.
+        #   - Pure stationary-gated trim Ki=0.08 (limit +/-0.25 -> +/-2.0 PWM, no 4.0x step boost) learns true hover trim
+        #     (+0.04 PWM Roll / +0.39 PWM Pitch) without slingshotting commanded +/-25cm maneuvers 180 deg out of phase.
         self.roll_controller = CascadedAxisController(
-            kp_pos=0.25,
-            max_velocity=0.06,
-            kp_vel=0.55,
-            ki_vel=0.30,
+            kp_pos=0.50,
+            max_velocity=0.14,
+            kp_vel=0.50,
+            ki_vel=0.08,
             kd_vel=0.18,
-            integral_limit=0.35,
-            integral_min=-0.35,
+            integral_limit=0.25,
+            integral_min=-0.25,
             d_alpha=0.35,
-            max_integral_vel_error=0.06,
+            max_integral_vel_error=0.05,
             max_d_accel=0.80,
         )
         self.pitch_controller = CascadedAxisController(
-            kp_pos=0.25,
-            max_velocity=0.06,
-            kp_vel=0.55,
-            ki_vel=0.30,
+            kp_pos=0.50,
+            max_velocity=0.14,
+            kp_vel=0.50,
+            ki_vel=0.08,
             kd_vel=0.18,
-            integral_limit=0.35,
-            integral_min=-0.35,
+            integral_limit=0.25,
+            integral_min=-0.25,
             d_alpha=0.35,
-            max_integral_vel_error=0.06,
+            max_integral_vel_error=0.05,
             max_d_accel=0.80,
         )
         # Backwards-compatible aliases to inner velocity PIDController objects
