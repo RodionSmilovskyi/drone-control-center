@@ -51,6 +51,7 @@ drone-control-center/
 ├── printed_parts/                   # 3D printable chassis & sensor mounts (.stl, .step)
 ├── docs/                            # Hardware, Betaflight dumps & testing handoff guides
 │   ├── architecture_diagram.md
+│   ├── inav_migration_handoff.md    # Step-by-step handoff guide for migrating from main branch to iNAV
 │   └── shift_pid_testing_handoff.md # 3D shift & 4-axis PID testing guide & mandatory agent tuning log
 ├── tests/                           # Unit and live verification tests
 │   ├── test_shared_memory_manager.py
@@ -58,6 +59,7 @@ drone-control-center/
 │   └── test_dashboard_sensors.py
 ├── scripts/                         # Standalone diagnostic, calibration & prototype scripts
 │   ├── calibrate_sensors.py         # Interactive CLI tool to calibrate optical flow scale factor
+│   ├── inav_sensor_check.py         # Standalone MSPv2 sensor bridge & iNAV telemetry verification script
 │   ├── sensor_check.py              # Standalone hardware diagnostic script for VL53L1X (down & front) & PMW3901
 │   ├── simpleUI.py / rich_ui.py     # Legacy standalone telemetry/manual control consoles
 │   └── inference-example.py         # Standalone TFLite experiment script
@@ -149,6 +151,7 @@ A terminal user interface implemented with **Rich**:
 ## 5. Calibration and Diagnostic Utilities
 
 - **`scripts/sensor_check.py`:** Independent hardware test for I2C and SPI sensors, ensuring addresses, XSHUT toggles, and SPI communication are functioning before launching background daemons.
+- **`scripts/inav_sensor_check.py`:** Standalone MSPv2 sensor bridge diagnostic that streams VL53L1X (`MSP2_SENSOR_RANGEFINDER` `0x1F01`) and PMW3901 (`MSP2_SENSOR_OPTICALFLOW` `0x1F02`) readings to an iNAV flight controller and verifies that iNAV activates its Rangefinder (`bit 4`) and Optical Flow (`bit 5`) status flags and reports valid sonar/altitude telemetry (see [`docs/inav_migration_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/inav_migration_handoff.md)).
 - **`scripts/calibrate_sensors.py`:** Interactive measurement helper to compute scale factors between optical flow pixel motion and physical distance in meters.
 - **`scripts/rich_ui.py`:** Standalone manual RC control utility over serial MSP for bench testing and telemetry reception.
 
