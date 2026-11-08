@@ -297,6 +297,7 @@ def keyboard_listener(pub_socket):
             break
 
 def main():
+    global shutting_down, current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_active
     console = Console()
     
     # Clear all .log files in logs/ so logging starts fresh
@@ -364,7 +365,6 @@ def main():
             shm_mgr = None
             hb_shm_mgr = None
             try:
-                global shutting_down, current_mode, desired_shift_z, desired_shift_x, desired_shift_y, test_seq_active
                 while not shutting_down:
                     # 1. Non-blocking read RC commands
                     try:
