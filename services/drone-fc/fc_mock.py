@@ -9,3 +9,7 @@ class FCMock:
         """Mock sending RC commands."""
         # Optional: Add debug logging if needed, but keep it quiet for 100Hz loop
         pass
+
+    def send_sensors(self, altitude_m: float, raw_dx: float, raw_dy: float):
+        """No-op mock sensor forwarding for WSL mode."""
+        pass

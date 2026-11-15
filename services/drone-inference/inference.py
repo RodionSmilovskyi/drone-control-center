@@ -37,10 +37,11 @@ def handle_disarmed(obs: np.ndarray, fc: FlightController) -> list:
 def handle_armed(obs: np.ndarray, fc: FlightController) -> list:
     """
     Mode: Armed. Returns dummy RC commands and resets FC.
+    AUX1=1800 (Armed + Angle), AUX2=1000 (Nav Off during ground idle).
     Format: ['roll', 'pitch', 'throttle', 'yaw', 'aux1', 'aux2']
     """
     fc.reset()
-    return [1500, 1500, 900, 1500, 1800, 1800]
+    return [1500, 1500, 900, 1500, 1800, 1000]
 
 def handle_ai(
     obs: np.ndarray,
@@ -108,9 +109,9 @@ def main():
     rc_pub.setsockopt(zmq.CONFLATE, 1)
     rc_pub.bind("tcp://127.0.0.1:5556")
 
-    # Shared Memory for observations
+    # Shared Memory for observations (9 doubles: 72 bytes)
     shm_name = "drone_sensor_data"
-    shm_size = 7 * 8  # 7 doubles
+    shm_size = 9 * 8  # 9 doubles
     shm_mgr = None
 
     # Heartbeat setup
@@ -207,7 +208,7 @@ def main():
                 pass
 
             # 2. Read observation from Shared Memory
-            obs = np.zeros(7, dtype=np.float64)
+            obs = np.zeros(9, dtype=np.float64)
             if shm_mgr is None:
                 try:
                     shm_mgr = SharedMemoryManager(shm_name, shm_size, create=False)
@@ -216,7 +217,7 @@ def main():
             
             if shm_mgr:
                 try:
-                    obs = shm_mgr.read_array(np.float64, (7,))
+                    obs = shm_mgr.read_array(np.float64, (9,))
                 except Exception:
                     shm_mgr.close()
                     shm_mgr = None

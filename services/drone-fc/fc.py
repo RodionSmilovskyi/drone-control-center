@@ -47,6 +47,13 @@ def main():
     hb_shm_name = "system_heartbeats"
     hb_shm_size = 3 * 8
     hb_shm_mgr = None
+
+    # Sensor SHM Setup for iNAV MSPv2 sensor forwarding
+    sensor_shm_name = "drone_sensor_data"
+    sensor_shm_size = 9 * 8
+    sensor_shm_mgr = None
+    last_sensor_ts = 0.0
+    last_sensor_send_time = 0.0
     
     # ZMQ Setup to receive RC commands from drone-inference
     context = zmq.Context()
@@ -59,6 +66,8 @@ def main():
         logger.info(f"Caught signal {signum}, shutting down...")
         if hasattr(provider, 'close'):
             provider.close()
+        if sensor_shm_mgr:
+            sensor_shm_mgr.close()
         if hb_shm_mgr:
             hb_shm_mgr.close()
         rc_sub.close()
@@ -92,6 +101,29 @@ def main():
             except Exception as e:
                 logger.error(f"Provider send_rc error: {e}")
 
+            # 2b. Forward sensor data from SHM to iNAV when updated (or at 20Hz keepalive)
+            if sensor_shm_mgr is None:
+                try:
+                    sensor_shm_mgr = SharedMemoryManager(sensor_shm_name, sensor_shm_size, create=False)
+                except Exception:
+                    sensor_shm_mgr = None
+
+            if sensor_shm_mgr and hasattr(provider, "send_sensors"):
+                try:
+                    obs = sensor_shm_mgr.read_array(np.float64, (9,))
+                    now = time.time()
+                    sensor_ts = obs[6]
+                    if (sensor_ts > 0 and sensor_ts != last_sensor_ts) or (now - last_sensor_send_time >= 0.05):
+                        is_new_frame = (sensor_ts != last_sensor_ts)
+                        last_sensor_ts = sensor_ts
+                        last_sensor_send_time = now
+                        dx = obs[7] if is_new_frame else 0.0
+                        dy = obs[8] if is_new_frame else 0.0
+                        provider.send_sensors(obs[0], dx, dy)
+                except Exception:
+                    sensor_shm_mgr.close()
+                    sensor_shm_mgr = None
+
             # 3. Update heartbeat (Index 2)
             if hb_shm_mgr is None:
                 try:
@@ -113,6 +145,8 @@ def main():
     except Exception as e:
         logger.error(f"Unexpected error in main loop: {e}")
     finally:
+        if sensor_shm_mgr:
+            sensor_shm_mgr.close()
         if hb_shm_mgr:
             hb_shm_mgr.close()
         rc_sub.close()

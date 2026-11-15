@@ -22,14 +22,14 @@ else:
         print(f"[CRITICAL] Failed to load real sensors on PI: {e}")
         print("Falling back to zero-data dummy class.")
         class SensorReal:
-            def read(self): return [0.0] * 5
+            def read(self): return [0.0] * 8
         SensorProvider = SensorReal
 
 def main():
     provider = SensorProvider()
     
-    # SHM structure: [alt, front_dist, sx, sy, vx, vy, heartbeat] (7 floats)
-    shm_size = 7 * 8 
+    # SHM structure: [alt, front_dist, sx, sy, vx, vy, heartbeat, raw_dx, raw_dy] (9 floats)
+    shm_size = 9 * 8 
     shm_name = "drone_sensor_data"
 
     hb_shm_name = "system_heartbeats"
@@ -71,10 +71,10 @@ def main():
     print(f"Sensor service started in {DRONE_ENV} mode. Writing to SHM: {shm_name}")
     try:
         while True:
-            # provider.read() returns [altitude, front_dist, shift_x, shift_y, vel_x, vel_y] (6 values)
+            # provider.read() returns [altitude, front_dist, shift_x, shift_y, vel_x, vel_y, raw_dx, raw_dy] (8 values)
             raw_data = provider.read()
             
-            # Pack into SHM: [alt, front_dist, sx, sy, vx, vy, heartbeat]
+            # Pack into SHM: [alt, front_dist, sx, sy, vx, vy, heartbeat, raw_dx, raw_dy] (9 floats)
             shm_data = [
                 raw_data[0], # alt
                 raw_data[1], # front_dist
@@ -82,7 +82,9 @@ def main():
                 raw_data[3], # sy
                 raw_data[4], # vx
                 raw_data[5], # vy
-                time.time()  # heartbeat
+                time.time(), # heartbeat / timestamp (index 6)
+                raw_data[6] if len(raw_data) > 6 else 0.0, # raw_dx (index 7)
+                raw_data[7] if len(raw_data) > 7 else 0.0, # raw_dy (index 8)
             ]
             
             array_data = np.array(shm_data, dtype=np.float64)

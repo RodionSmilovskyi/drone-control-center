@@ -64,6 +64,8 @@ class SensorReal:
 
         self.filtered_dx = 0.0
         self.filtered_dy = 0.0
+        self.raw_dx = 0.0
+        self.raw_dy = 0.0
 
         self.lock = threading.Lock()
         self._init_hardware()
@@ -182,6 +184,9 @@ class SensorReal:
                     motion = self.flow.get_motion(timeout=0.025)
                     if motion is not None and current_time > warmup_end:
                         dx, dy = motion
+                        with self.lock:
+                            self.raw_dx += float(dx)
+                            self.raw_dy += float(dy)
                         
                         # 3a. Low Pass Filter raw motion
                         self.filtered_dx = (self.ALPHA_FLOW * dx) + (1.0 - self.ALPHA_FLOW) * self.filtered_dx
@@ -242,6 +247,18 @@ class SensorReal:
 
     def read(self):
         with self.lock:
+            dx, dy = self.raw_dx, self.raw_dy
+            self.raw_dx = 0.0
+            self.raw_dy = 0.0
             # Longitudinal axis (Y) is inverted on PMW3901 hardware mount; negate shift_x and vel_x
             # so that forward drone movement produces positive Y displacement and velocity.
-            return [self.altitude, self.front_dist, self.shift_y, -self.shift_x, self.vel_y_norm, -self.vel_x_norm]
+            return [
+                self.altitude,
+                self.front_dist,
+                self.shift_y,
+                -self.shift_x,
+                self.vel_y_norm,
+                -self.vel_x_norm,
+                dx,
+                dy,
+            ]

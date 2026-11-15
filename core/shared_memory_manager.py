@@ -32,7 +32,16 @@ class SharedMemoryManager:
             try:
                 self.shm = shared_memory.SharedMemory(name=name, create=True, size=size)
             except FileExistsError:
-                self.shm = shared_memory.SharedMemory(name=name)
+                existing = shared_memory.SharedMemory(name=name)
+                if existing.size < size:
+                    existing.close()
+                    try:
+                        existing.unlink()
+                    except FileNotFoundError:
+                        pass
+                    self.shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+                else:
+                    self.shm = existing
         else:
             self.shm = shared_memory.SharedMemory(name=name)
         

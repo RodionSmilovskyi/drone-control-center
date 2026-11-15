@@ -251,13 +251,13 @@ def main():
     rc_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
     shm_name = "drone_sensor_data"
-    shm_size = 7 * 8
+    shm_size = 9 * 8
     
     hb_shm_name = "system_heartbeats"
     hb_shm_size = 3 * 8
 
     # Try to connect to SHM, if not exists, use zeros
-    sensor_data = np.zeros(7, dtype=np.float64)
+    sensor_data = np.zeros(9, dtype=np.float64)
     heartbeats = np.zeros(3, dtype=np.float64)
     rc_commands = [1000, 1000, 1000, 1000, 1000, 1000]
 
@@ -298,7 +298,7 @@ def main():
                     
                     if shm_mgr:
                         try:
-                            sensor_data = shm_mgr.read_array(np.float64, (7,))
+                            sensor_data = shm_mgr.read_array(np.float64, (9,))
                         except Exception:
                             if shm_mgr:
                                 shm_mgr.close()

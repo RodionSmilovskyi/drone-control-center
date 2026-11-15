@@ -34,13 +34,13 @@ drone-control-center/
 ├── services/
 │   ├── drone-fc/                    # Flight Controller Service
 │   │   ├── drone-fc.service         # Systemd unit definition
-│   │   ├── fc.py                    # Main FC service entrypoint (ZMQ 5556 SUB -> MSP RC)
-│   │   ├── fc_real.py               # Serial MSP protocol provider (via yamspy.MSPy)
+│   │   ├── fc.py                    # Main FC service entrypoint (ZMQ 5556 SUB + SHM sensors -> MSP RC & MSPv2 sensors)
+│   │   ├── fc_real.py               # Serial MSP/MSPv2 protocol provider (via yamspy.MSPy)
 │   │   └── fc_mock.py               # WSL/Mock provider
 │   ├── drone-inference/             # Autonomous & Manual Control Service
 │   │   ├── drone-inference.service  # Systemd unit definition
-│   │   ├── inference.py             # Control loop (SHM sensor read -> PID/AI -> ZMQ 5556 PUB)
-│   │   ├── flight_controller.py     # High-level action to low-level RC mapper
+│   │   ├── inference.py             # Control loop (SHM sensor read -> Velocity Mapper -> ZMQ 5556 PUB)
+│   │   ├── flight_controller.py     # High-level shift-to-velocity RC mapper for iNAV (NAV ALTHOLD + NAV POSHOLD)
 │   │   └── pid_controller.py        # Derivative-on-measurement PID controller
 │   └── drone-sensors/               # Hardware Sensor Ingestion Service
 │       ├── drone-sensors.service    # Systemd unit definition
@@ -78,7 +78,7 @@ drone-control-center/
 
 ### 4.1 Shared Memory Layout (`core/shared_memory_manager.py`)
 
-1. **`drone_sensor_data` (7 x `float64`, 56 bytes):**
+1. **`drone_sensor_data` (9 x `float64`, 72 bytes):**
    - `[0]`: `altitude` (meters, down-facing ToF sensor)
    - `[1]`: `front_distance` (meters, front-facing ToF sensor)
    - `[2]`: `shift_x` (accumulated X displacement in meters)
@@ -86,13 +86,17 @@ drone-control-center/
    - `[4]`: `vel_x` (normalized X velocity in `[-1.0, 1.0]`)
    - `[5]`: `vel_y` (normalized Y velocity in `[-1.0, 1.0]`)
    - `[6]`: `timestamp` (epoch timestamp of sensor update)
+   - `[7]`: `raw_flow_dx` (accumulated raw PMW3901 optical flow pixel delta X since last read)
+   - `[8]`: `raw_flow_dy` (accumulated raw PMW3901 optical flow pixel delta Y since last read)
 
 2. **`system_heartbeats` (3 x `float64`, 24 bytes):**
    - `Index 0`: `drone-sensors` heartbeat timestamp
    - `Index 1`: `drone-inference` heartbeat timestamp
    - `Index 2`: `drone-fc` heartbeat timestamp
 
-*Safety Feature:* `unregister_shm()` isolates segments from Python's default `multiprocessing.resource_tracker` so that background services crashing or restarting do not prematurely delete active segments.
+*Safety Features:*
+- `unregister_shm()` isolates segments from Python's default `multiprocessing.resource_tracker` so that background services crashing or restarting do not prematurely delete active segments.
+- When `create=True` encounters an existing segment smaller than requested (`existing.size < size`), `SharedMemoryManager` unlinks and recreates the segment at the expanded size.
 
 ---
 
@@ -104,28 +108,32 @@ drone-control-center/
   - **VL53L1X Downward Time-of-Flight (I2C @ 0x30, GPIO 17 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.6$), polled on dedicated I2C thread `_poll_tof_loop`.
   - **VL53L1X Forward Time-of-Flight (I2C @ 0x31, GPIO 27 XSHUT):** Distance ranging up to 3.0m with low-pass filtering ($\alpha = 0.3$), polled on `_poll_tof_loop`.
   - **PMW3901 Optical Flow (SPI CS @ GPIO 8):** Frame displacement measurement (`get_motion(timeout=0.025)` on dedicated SPI thread `_poll_flow_loop`) calibrated via `FLOW_METERS_PER_PIXEL_PER_METER = 0.001997`, low-pass filter ($\alpha = 0.35$), deadband ($0.05$), smooth velocity decay on timeout, and ground cutoff below `0.045m`.
-- **Output:** Writes observations directly to `drone_sensor_data` and updates `system_heartbeats[0]`.
+- **Output:** Accumulates raw PMW3901 pixel deltas (`raw_dx`, `raw_dy`) under `self.lock` between 30 Hz `read()` calls (resetting atomically upon `read()`), writes all 9 `float64` values (`[alt, front_dist, sx, sy, vx, vy, timestamp, raw_dx, raw_dy]`) directly to `drone_sensor_data`, and updates `system_heartbeats[0]`.
 
 #### B. `drone-inference` (`services/drone-inference/`)
 - **Execution Rate:** 100 Hz.
 - **Inputs:**
-  - `drone_sensor_data` (Shared Memory)
+  - `drone_sensor_data` (Shared Memory, 9 x `float64`)
   - Control mode and dynamic 3D shift setpoints from ZMQ subscriber `tcp://127.0.0.1:5555` (JSON payload `{"mode": "...", "shift_z": float, "shift_x": float, "shift_y": float}` with fallback to `"target_alt"` or plain mode string).
-- **Operating Modes:**
-  - `disarmed`: Sends safe disarm commands `[1500, 1500, 900, 1500, 1000, 1000]` and resets all PID and reference states.
-  - `armed`: Sends armed idle commands `[1500, 1500, 900, 1500, 1800, 1800]` and resets all PID and reference states.
-  - `ai`: Accepts normalized 3D spatial shifts `desired_shift_z`, `desired_shift_x`, and `desired_shift_y` in `[-1.0, 1.0]` and computes 4-axis PID-controlled RC commands (`[roll, pitch, throttle, yaw, 1800, 1800]`):
-    - **Reference State Latching:** On the first frame when `ai` mode engages, `FlightController` latches the starting normalized altitude (`ref_alt_norm = obs[0] / MAX_ALTITUDE`, `MAX_ALTITUDE = 3.0m`) and starting horizontal shifts (`ref_shift_x_norm`, `ref_shift_y_norm` with `MAX_XY_SHIFT = 1.0m`). Target normalized altitude is $\text{desired\_alt\_norm} = \text{clip}(\text{ref\_alt\_norm} + \text{desired\_shift\_z}, 0.0, 1.0)$ (default `desired_shift_z = +0.1333`, i.e., `+0.40m`), allowing both positive climbs and negative descents relative to the starting altitude.
-    - **Throttle PID (`throttle_pid`):** Derivative-on-measurement (`Kp = 5.2, Ki = 1.8, Kd = 2.2`, bidirectional integral clamped to `[-0.35, 1.2]`), paired with Betaflight `vbat_sag_compensation = 100` and hover throttle baseline = `1535` (bounded `[1341, 1800]`), smooth setpoint slew/ramping ($0.35\text{ m/s}$), ground threshold (`0.018m`), and expanded asymmetrical PID correction authority (`[-150, +165]` PWM -> `[1385, 1700]` PWM).
-    - **Roll (`shift_x`) & Pitch (`shift_y`) PIDs (`roll_pid`, `pitch_pid`):** Derivative-on-measurement (`Kp = 0.48, Ki = 0.08, Kd = 0.35, integral_limit = ±0.80 -> ±6.4 PWM max trim, d_alpha = 0.35`) with a `350 PWM/s` (`35°/s`) command slew limiter. Parameterized explicitly against the SpeedyBee FC's `50°` max angle limit (`500 PWM` = `50°`, `10 PWM ≈ 1°`) with a safe indoor tilt cap of `max_indoor_tilt_deg = 5.0°` (`±50 PWM`, clamping Roll/Pitch to `[1450, 1550]`). Held strictly neutral (`1500 PWM`) with zero integral windup below the `0.050m` horizontal airborne threshold (`xy_airborne_threshold_norm`) for level liftoff.
-    - **Yaw PID (`yaw_pid`):** Derivative-on-measurement (`Kp = 0.5, Ki = 0.0, Kd = 0.1`), maintaining neutral `1500 PWM` when yaw error is `0.0`.
+- **Operating Modes (iNAV AUX Convention):**
+  - `disarmed`: Sends safe disarm commands `[1500, 1500, 900, 1500, 1000, 1000]` (`AUX1=1000` Disarmed, `AUX2=1000` Nav Off) and resets all controller and reference states.
+  - `armed`: Sends armed ground-idle commands `[1500, 1500, 900, 1500, 1800, 1000]` (`AUX1=1800` Armed + Angle mode, `AUX2=1000` Nav Off so `NAV ALTHOLD`/`POSHOLD` do not fight ground idle) and resets reference states.
+  - `ai`: Accepts normalized 3D spatial shifts `desired_shift_z`, `desired_shift_x`, and `desired_shift_y` in `[-1.0, 1.0]` and outputs velocity-stick RC commands around `1500 PWM` hold (`[roll, pitch, throttle, yaw, 1800, 1800]`, engaging `NAV ALTHOLD` + `NAV POSHOLD` on iNAV):
+    - **Reference State Latching:** On the first frame when `ai` mode engages, `FlightController` latches the starting normalized altitude (`ref_alt_norm = obs[0] / MAX_ALTITUDE`, `MAX_ALTITUDE = 3.0m`) and starting horizontal shifts (`ref_shift_x_norm`, `ref_shift_y_norm` with `MAX_XY_SHIFT = 1.0m`, zeroed below the `0.050m` airborne threshold `xy_airborne_threshold_norm`). Target normalized altitude is $\text{desired\_alt\_norm} = \text{clip}(\text{ref\_alt\_norm} + \text{desired\_shift\_z}, 0.0, 1.0)$ (default `desired_shift_z = +0.1333`, i.e., `+0.40m`).
+    - **Vertical Velocity (`throttle_pid`):** Proportional velocity mapping (`Kp = 1.8, Ki = 0.0, Kd = 0.2, d_alpha = 0.5`) centered on `hover_throttle = 1500.0` (`0 m/s` vertical hold in `NAV ALTHOLD`). Within arrival tolerance `alt_arrival_tol_norm = 0.010` (`3 cm`), outputs `1500 PWM`; outside tolerance, offsets past iNAV's `inav_thr_deadband = 40.0` (`alt_hold_deadband`) up to `±120 PWM` (`[1380, 1620]`, hard-clamped to `[1350, 1650]`).
+    - **Horizontal Velocity (`roll_pid`, `pitch_pid`):** Proportional velocity mapping (`Kp = 1.2, Ki = 0.0, Kd = 0.1, d_alpha = 0.5`) centered on `1500 PWM` (`0 m/s` hold in `NAV POSHOLD`). Held strictly at `1500 PWM` below `0.050m` altitude (`xy_airborne_threshold_norm`) and within `xy_arrival_tol_norm = 0.030` (`3 cm`); outside tolerance, offsets past `inav_rp_deadband = 25.0` (`pos_hold_deadband`) up to `max_rp_correction = ±80 PWM` (`[1420, 1580]`).
+    - **Yaw (`yaw_pid`):** Proportional command (`Kp = 0.5, Ki = 0.0, Kd = 0.1`), clamped to `max_yaw_correction = ±50 PWM`, maintaining neutral `1500 PWM` when yaw error is `0.0`.
     - **Testing & Tuning Log:** Detailed testing steps and a mandatory agent tuning log are maintained in [`docs/shift_pid_testing_handoff.md`](file:///home/rodion/projects/drone-control-center/docs/shift_pid_testing_handoff.md). Any agent adjusting PID gains, limits, or shift logic must record its changes in that handoff document.
 - **Output:** Publishes RC packet `[roll, pitch, throttle, yaw, aux1, aux2]` over ZMQ PUB `tcp://127.0.0.1:5556`.
 
 #### C. `drone-fc` (`services/drone-fc/`)
-- **Execution Rate:** 100 Hz.
-- **Hardware Interface:** Communicates with Betaflight/iNAV via serial using MultiWii Serial Protocol (MSP) via `yamspy.MSPy`. Features dynamic serial port detection (`/dev/ttyACM*`, `/dev/ttyUSB*`), multi-attempt initialization with DTR settle times to survive service restarts, and safe disarm sequence upon shutdown.
-- **Output:** Dispatches raw RC channels `send_RAW_RC` and maintains connection alive to avoid flight controller failsafe timeouts.
+- **Execution Rate:** 100 Hz RC loop with event-driven / 20 Hz keepalive MSPv2 sensor forwarding.
+- **Hardware Interface:** Communicates with iNAV (or Betaflight) via serial using MultiWii Serial Protocol (MSP/MSPv2) via `yamspy.MSPy`. Features dynamic serial port detection (`/dev/ttyACM*`, `/dev/ttyUSB*`), multi-attempt initialization with DTR settle times to survive service restarts (using MSPv1 init queries only to avoid `yamspy 0.3.3` MSPv2 `receive_msg()` CRC8 parsing issues), and safe disarm sequence upon shutdown.
+- **MSPv2 Sensor Bridge (`send_sensors`):** Reads `drone_sensor_data` (`9 x float64`, 72 bytes) from Shared Memory and forwards rangefinder and optical flow frames to iNAV whenever `obs[6]` (`timestamp`) updates or at least every `0.05s` (20 Hz keepalive; sending `0, 0` optical flow deltas on keepalive repeats):
+  - `MSP2_SENSOR_RANGEFINDER` (`0x1F01`, `<Bi`): `quality = 255`, `distance_mm` when `altitude_m > 0.005m` (else `quality = 0, -1`).
+  - `MSP2_SENSOR_OPTICALFLOW` (`0x1F02`, `<Bii`): `quality = 255`, rounded `raw_dx`, `raw_dy`.
+  - Sent fire-and-forget via `send_RAW_msg` without `receive_msg()` because iNAV returns `MSP_RESULT_NO_REPLY` for `0x1F00..0x1FFF` sensor injection commands.
+- **Output:** Dispatches raw RC channels `send_RAW_RC`, streams MSPv2 sensor frames, and maintains connection alive to avoid flight controller failsafe timeouts.
 
 ---
 

@@ -9,7 +9,7 @@ class SensorMock:
     def read(self):
         """
         Generates fake data similar to what sensor_real produces.
-        [altitude (0..3), front_dist (0..3), shift_x (-1..1), shift_y (-1..1), velocity_x (-1..1), velocity_y (-1..1)]
+        [altitude (0..3), front_dist (0..3), shift_x (-1..1), shift_y (-1..1), velocity_x (-1..1), velocity_y (-1..1), raw_dx, raw_dy]
         """
         t = time.time() - self.start_time
         
@@ -30,5 +30,7 @@ class SensorMock:
             max(-1.0, min(1.0, shift_x + noise())),
             max(-1.0, min(1.0, shift_y + noise())),
             max(-1.0, min(1.0, velocity_x + noise())),
-            max(-1.0, min(1.0, velocity_y + noise()))
+            max(-1.0, min(1.0, velocity_y + noise())),
+            0.0,
+            0.0,
         ]

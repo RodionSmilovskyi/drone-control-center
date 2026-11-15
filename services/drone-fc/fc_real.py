@@ -2,7 +2,11 @@ import time
 import logging
 import glob
 import os
+import struct
 from yamspy import MSPy
+
+MSP2_SENSOR_RANGEFINDER = 0x1F01
+MSP2_SENSOR_OPTICALFLOW = 0x1F02
 
 class FCReal:
     """Real provider for the flight controller using MSPy over a serial connection."""
@@ -66,10 +70,6 @@ class FCReal:
             'MSP_BOARD_INFO', 'MSP_UID', 'MSP_ACC_TRIM', 'MSP_NAME', 'MSP_STATUS', 'MSP_STATUS_EX',
             'MSP_BATTERY_CONFIG', 'MSP_BATTERY_STATE', 'MSP_BOXNAMES', 'MSP_ATTITUDE', 'MSP_ALTITUDE'
         ]
-
-        if hasattr(self.board, 'INAV') and self.board.INAV:
-            command_list.append('MSPV2_INAV_ANALOG')
-            command_list.append('MSP_VOLTAGE_METER_CONFIG')
         
         for msg in command_list: 
             try:
@@ -89,6 +89,29 @@ class FCReal:
                     self.board.process_recv_data(dataHandler)
             except Exception as e:
                 self.logger.error(f"send_rc error: {e}")
+
+    def send_sensors(self, altitude_m: float, raw_dx: float, raw_dy: float):
+        """
+        Forwards rangefinder altitude and optical flow pixel deltas to iNAV via MSPv2.
+        IMPORTANT: Do NOT call receive_msg() after send_RAW_msg() for 0x1F01/0x1F02
+        because iNAV returns MSP_RESULT_NO_REPLY for sensor injection frames.
+        """
+        if not self.board:
+            return
+        try:
+            # 1. Rangefinder (0x1F01): <Bi (uint8 quality, int32 distance_mm)
+            if altitude_m > 0.005:
+                dist_mm = int(round(altitude_m * 1000.0))
+                rf_payload = struct.pack("<Bi", 255, dist_mm)
+            else:
+                rf_payload = struct.pack("<Bi", 0, -1)
+            self.board.send_RAW_msg(MSP2_SENSOR_RANGEFINDER, data=list(rf_payload))
+
+            # 2. Optical Flow (0x1F02): <Bii (uint8 quality, int32 motionX, int32 motionY)
+            of_payload = struct.pack("<Bii", 255, int(round(raw_dx)), int(round(raw_dy)))
+            self.board.send_RAW_msg(MSP2_SENSOR_OPTICALFLOW, data=list(of_payload))
+        except Exception as e:
+            self.logger.error(f"send_sensors error: {e}")
 
     def close(self):
         """Closes the connection to the flight controller with safe disarm."""
