@@ -62,9 +62,9 @@ graph TD
 
 ---
 
-## 2. Phase 1: iNAV Firmware Configuration (SpeedyBee F405 Mini)
+## 2. Phase 1: iNAV 9.1.0 Firmware Configuration (SpeedyBee F405 Mini)
 
-After flashing **iNAV** (target `SPEEDYBEEF405MINI`) onto the flight controller, apply the following configuration in the **iNAV Configurator CLI** before running the RPi diagnostic script:
+After flashing **iNAV 9.1.0** (target `SPEEDYBEEF405MINI`, via DFU mode if serial flashing fails) and calibrating the accelerometer (`ICM42605`), apply the following hardware-verified configuration in the **iNAV Configurator CLI** before running the RPi diagnostic script (a full `diff all` backup including `ICM42605` calibration, `EZ Tune` profile, Quad X mixer, `MULTISHOT`, `throttle_idle = 15.000`, `aux 0..3`, and `logic 0` is archived in [`docs/inav_9.1.0_diff_all.txt`](file:///home/rodion/projects/drone-control-center/docs/inav_9.1.0_diff_all.txt)):
 
 ```text
 # 1. Receiver via MSP (over USB / UART)
@@ -76,31 +76,52 @@ set rangefinder_hardware = MSP
 set opflow_hardware = MSP
 set opflow_scale = 10.5
 set align_opflow = CW0FLIP
+set debug_mode = FLOW
 
-# 3. Indoor Navigation & Velocity Limits (Gentle Confined-Space Bounds)
-set nav_mc_vel_xy_max = 50        # Max 50 cm/s horizontal speed in POSHOLD
-set nav_mc_vel_z_max = 40         # Max 40 cm/s climb/descent speed in ALTHOLD
-set nav_mc_bank_angle = 10        # Max 10 deg bank angle in autonomous modes
-set rc_deadband = 25              # 25 PWM deadband around 1500 for Roll/Pitch
-set alt_hold_deadband = 40        # 40 PWM deadband around 1500 for Throttle
+# 3. ESC Protocol & Armed Idle (SpeedyBee F405 Mini + Analog 4-in-1 ESC)
+set motor_pwm_protocol = MULTISHOT
+set motorstop_on_low = OFF
+set throttle_idle = 15
 
-# 4. Mode Ranges (Matching RPi AUX1 / AUX2 convention: [roll, pitch, throttle, yaw, aux1, aux2])
+# 4. Indoor Navigation & Velocity Limits (iNAV 9.1.0 Parameter Names)
+set nav_manual_speed = 50             # Max 50 cm/s manual horizontal speed in POSHOLD
+set nav_auto_speed = 50               # Max 50 cm/s auto horizontal speed in POSHOLD
+set nav_mc_manual_climb_rate = 40     # Max 40 cm/s manual climb/descent rate in ALTHOLD
+set nav_mc_auto_climb_rate = 40       # Max 40 cm/s auto climb/descent rate in ALTHOLD
+set nav_mc_bank_angle = 15            # Minimum allowed bank angle limit in iNAV 9.1.0 (15 deg)
+set pos_hold_deadband = 25            # 25 PWM deadband around 1500 for Roll/Pitch
+set alt_hold_deadband = 40            # 40 PWM deadband around 1500 for Throttle
+
+# 5. CLI Mode Ranges (Matching RPi AUX1 / AUX2 convention: [roll, pitch, throttle, yaw, aux1, aux2])
 #    - Disarmed: aux1=1000, aux2=1000
 #    - Armed (Angle Idle): aux1=1800, aux2=1000
 #    - AI (Armed + Angle + NAV ALTHOLD + NAV POSHOLD): aux1=1800, aux2=1800
-# (Configure in iNAV Configurator -> Modes tab):
-#   - ARM:         AUX1 [1700 .. 2100]
-#   - ANGLE:       AUX1 [1700 .. 2100]
-#   - NAV ALTHOLD: AUX2 [1700 .. 2100]
-#   - NAV POSHOLD: AUX2 [1700 .. 2100]
+#    Note: aux channel index is 0-based (0 = AUX1, 1 = AUX2).
+aux 0 0 0 1700 2100    # ARM:         AUX1 [1700 .. 2100]
+aux 1 1 0 1700 2100    # ANGLE:       AUX1 [1700 .. 2100]
+aux 2 3 1 1700 2100    # NAV ALTHOLD: AUX2 [1700 .. 2100]
+aux 3 11 1 1700 2100   # NAV POSHOLD: AUX2 [1700 .. 2100]
+
+# 6. Indoor Optical-Flow GPS Arming Bypass (Programming Logic Condition)
+#    Operation 22 = LOGIC_CONDITION_OVERRIDE_ARMING_SAFETY (always active: operand -1)
+logic 0 1 -1 22 0 0 0 0 0
 
 save
 ```
 
+> [!IMPORTANT]
+> **Why `throttle_idle = 15` (15%) is Required:**
+> - In **`armed`** mode (`a` key), `drone-inference` must send `rc_throttle = 900` (`< 1050` `min_check`) so iNAV passes its pre-arm low-throttle check (`~ARMING_DISABLED_THROTTLE`).
+> - Once armed with `motorstop_on_low = OFF`, iNAV commands the motors at `1000 + throttle_idle * 10` PWM whenever throttle is at idle (`900`).
+> - Under analog `MULTISHOT`, iNAV's default `throttle_idle = 8` (8% = `1080 PWM`) falls below the 4-in-1 ESC's physical motor startup threshold (`~1130–1150 PWM`), causing iNAV to report `Motors = [1080, 1080, 1080, 1080]` with zero physical rotation.
+> - Setting `throttle_idle = 15` (**15% = `1150 PWM`**) reliably spins all 4 motors at a smooth, safe ground idle while keeping `rc_throttle = 900` compliant with iNAV arming safety checks.
+
 > [!NOTE]
-> Notice the AUX channel improvement for iNAV:
-> - In **`armed`** mode (`a` key), send `aux1 = 1800, aux2 = 1000` (Arms in `ANGLE` mode with throttle at `900` idle so motors spin safely on the ground without engaging altitude/position controllers).
-> - In **`ai`** mode (`x` key), send `aux1 = 1800, aux2 = 1800` (Engages `NAV ALTHOLD` + `NAV POSHOLD`).
+> **Hardware-Verified iNAV 9.1.0 Migration Notes:**
+> - **ESC Protocol (`MULTISHOT`):** `SPEEDYBEEF405MINI` in iNAV 9.1.0 has a `TIM3`/`TIM4` DMA conflict under `DSHOT300` that causes continuous ESC beeping and prevents motor spin. Using `motor_pwm_protocol = MULTISHOT` eliminates the DMA conflict.
+> - **Parameter Renames in iNAV 9.1.0:** `nav_mc_vel_xy_max` was replaced by `nav_manual_speed` / `nav_auto_speed`; `nav_mc_vel_z_max` was replaced by `nav_mc_manual_climb_rate` / `nav_mc_auto_climb_rate`; `rc_deadband` was replaced by `pos_hold_deadband`; and `nav_mc_bank_angle` enforces a minimum value of `15`.
+> - **CLI `aux` & `logic` Requirement:** The iNAV Configurator GUI Modes tab hides `NAV POSHOLD` (`box_id 11`) when `gps_provider = NONE` (and `AUTO` channel selection can save channel index `255`), so all 4 mode ranges (`aux 0..3`) must be entered in CLI. Additionally, iNAV 9.1.0 removed `nav_extra_arming_safety = OFF` (leaving only `ON` and `ALLOW_BYPASS`), so configuring `NAV POSHOLD` triggers `WAITING FOR GPS FIX` (`0x0800` `ARMING_DISABLED_NAVIGATION_UNSAFE`) unless `logic 0 1 -1 22 0 0 0 0 0` (`LOGIC_CONDITION_OVERRIDE_ARMING_SAFETY`) is set for indoor optical-flow operation without GPS.
+> - **AUX Mode Mapping:** In **`armed`** mode (`a` key), send `aux1 = 1800, aux2 = 1000` (Arms in `ANGLE` mode at `1150 PWM` idle without engaging altitude/position controllers). In **`ai`** mode (`x` key), send `aux1 = 1800, aux2 = 1800` (Engages `NAV ALTHOLD` + `NAV POSHOLD`).
 
 ---
 
@@ -787,11 +808,11 @@ output_details = interpreter.get_output_details()
 
 Implementing agents **MUST** execute these gates in order and wait for user hardware output at each gate:
 
-- [ ] **Gate 1 — Unit Tests (WSL / Local Sandbox):**
+- [x] **Gate 1 — Unit Tests (WSL / Local Sandbox):**
   Update [`tests/test_inference_altitude.py`](file:///home/rodion/projects/drone-control-center/tests/test_inference_altitude.py) and [`tests/test_dashboard_sensors.py`](file:///home/rodion/projects/drone-control-center/tests/test_dashboard_sensors.py) for the 9-float `drone_sensor_data` array and iNAV `1500 PWM` hold baseline, then run `pytest`.
-- [ ] **Gate 2 — On-Device Sensor Bridge Check (Props OFF):**
+- [x] **Gate 2 — On-Device Sensor Bridge Check (Props OFF):**
   Ask the user to run `python3 scripts/inav_sensor_check.py` on the Raspberry Pi and provide `logs/inav_sensor_check.log`. Confirm `RF_Bit=OK`, `OF_Bit=OK`, `Sonar > 0cm`, and verify `align_opflow` axis signs.
-- [ ] **Gate 3 — Full Service Integration Check (Props OFF):**
+- [x] **Gate 3 — Full Service Integration Check (Props OFF):**
   Start `drone-sensors`, `drone-inference`, `drone-fc`, and `dashboard.py`. Verify all 3 heartbeats are `OK`, `armed` mode sends `[1500, 1500, 900, 1500, 1800, 1000]`, and `ai` mode sends `[..., 1800, 1800]`.
 - [ ] **Gate 4 — Tethered / Confined Hover Test (Props ON):**
   Engage `armed` (`a`) $\rightarrow$ `ai` (`x`) with `desired_shift_z = +0.133` (`+0.40m`, `desired_shift_x = 0.0`, `desired_shift_y = 0.0`). Confirm climb to `~0.40m`, transition of `rc_throttle` to `1500 PWM` upon reaching target altitude, and stationary `NAV POSHOLD` lock.

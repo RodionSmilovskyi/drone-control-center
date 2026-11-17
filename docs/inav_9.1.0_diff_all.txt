@@ -1,0 +1,219 @@
+# version
+# INAV/SPEEDYBEEF405MINI 9.1.0 Jul  8 2026 / 02:13:06 (15317503) 
+# GCC-13.2.1 20231009
+
+# start the command batch
+batch start
+
+# reset configuration to default settings
+defaults noreboot
+
+# resources
+
+# Timer overrides
+
+# Outputs [servo]
+
+# safehome
+
+# Fixed Wing Approach
+
+# geozone
+
+# geozone vertices
+
+# features
+feature PWM_OUTPUT_ENABLE
+
+# beeper
+
+# blackbox
+blackbox -NAV_ACC
+blackbox NAV_POS
+blackbox NAV_PID
+blackbox MAG
+blackbox ACC
+blackbox ATTI
+blackbox RC_DATA
+blackbox RC_COMMAND
+blackbox MOTORS
+blackbox -GYRO_RAW
+blackbox -PEAKS_R
+blackbox -PEAKS_P
+blackbox -PEAKS_Y
+blackbox SERVOS
+
+# Receiver: Channel map
+
+# Ports
+
+# LEDs
+
+# LED color
+
+# LED mode_color
+
+# Modes [aux]
+aux 0 0 0 1700 2100
+aux 1 1 0 1700 2100
+aux 2 3 1 1700 2100
+aux 3 11 1 1700 2100
+
+# Adjustments [adjrange]
+
+# Receiver rxrange
+
+# temp_sensor
+
+# Mission Control Waypoints [wp]
+#wp 0 invalid
+
+# OSD [osd_layout]
+
+# Programming: logic
+logic 0 1 -1 22 0 0 0 0 0
+
+# Programming: global variables
+
+# Programming: PID controllers
+
+# OSD: custom elements
+
+# master
+set gyro_main_lpf_hz = 90
+set dynamic_gyro_notch_q = 250
+set dynamic_gyro_notch_min_hz = 60
+set dynamic_gyro_notch_mode = 3D
+set setpoint_kalman_q = 200
+set gyro_zero_x = 1
+set gyro_zero_y = -10
+set gyro_zero_z = 2
+set ins_gravity_cmss =  981.928
+set acc_hardware = ICM42605
+set acczero_y = -8
+set acczero_z = -21
+set accgain_x = 4087
+set accgain_y = 4098
+set accgain_z = 4084
+set rangefinder_hardware = MSP
+set opflow_hardware = MSP
+set align_mag = CW270FLIP
+set mag_hardware = NONE
+set baro_hardware = DPS310
+set receiver_type = MSP
+set blackbox_rate_denom = 2
+set motor_pwm_protocol = MULTISHOT
+set failsafe_procedure = DROP
+set applied_defaults = 6
+set pos_hold_deadband = 25
+set alt_hold_deadband = 40
+set airmode_type = THROTTLE_THRESHOLD
+set nav_auto_speed = 50
+set nav_manual_speed = 50
+set nav_mc_bank_angle = 15
+set nav_mc_auto_climb_rate = 40
+set nav_mc_manual_climb_rate = 40
+set debug_mode = FLOW
+
+# control_profile
+control_profile 1
+
+set mc_p_pitch = 32
+set mc_i_pitch = 91
+set mc_d_pitch = 27
+set mc_cd_pitch = 116
+set mc_p_roll = 28
+set mc_i_roll = 78
+set mc_cd_roll = 100
+set mc_p_yaw = 38
+set mc_i_yaw = 82
+set mc_cd_yaw = 100
+set dterm_lpf_hz = 85
+set d_boost_min =  1.000
+set d_boost_max =  1.000
+set antigravity_gain =  2.000
+set antigravity_accelerator =  5.000
+set smith_predictor_delay =  1.768
+set tpa_rate = 20
+set tpa_breakpoint = 1200
+set rc_expo = 80
+set rc_yaw_expo = 80
+set roll_rate = 70
+set pitch_rate = 70
+set yaw_rate = 60
+set ez_enabled = ON
+set ez_filter_hz = 90
+set ez_axis_ratio = 116
+set ez_response = 71
+set ez_damping = 103
+set ez_stability = 105
+set ez_rate = 134
+set ez_expo = 118
+
+# control_profile
+control_profile 2
+
+set d_boost_min =  1.000
+set d_boost_max =  1.000
+set antigravity_gain =  2.000
+set antigravity_accelerator =  5.000
+set tpa_rate = 20
+set tpa_breakpoint = 1200
+
+# control_profile
+control_profile 3
+
+set d_boost_min =  1.000
+set d_boost_max =  1.000
+set antigravity_gain =  2.000
+set antigravity_accelerator =  5.000
+set tpa_rate = 20
+set tpa_breakpoint = 1200
+
+# mixer_profile
+mixer_profile 1
+
+set model_preview_type = 3
+set motorstop_on_low = OFF
+
+# Mixer: motor mixer
+
+mmix reset
+
+mmix 0  1.000 -1.000  1.000 -1.000
+mmix 1  1.000 -1.000 -1.000  1.000
+mmix 2  1.000  1.000  1.000  1.000
+mmix 3  1.000  1.000 -1.000 -1.000
+
+# Mixer: servo mixer
+
+# mixer_profile
+mixer_profile 2
+
+
+# Mixer: motor mixer
+
+# Mixer: servo mixer
+
+# battery_profile
+battery_profile 1
+
+set throttle_idle =  15.000
+
+# battery_profile
+battery_profile 2
+
+
+# battery_profile
+battery_profile 3
+
+
+# restore original profile selection
+control_profile 1
+mixer_profile 1
+battery_profile 1
+
+# save configuration
+save
+
+# 

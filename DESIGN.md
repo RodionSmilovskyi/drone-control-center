@@ -49,8 +49,9 @@ drone-control-center/
 │       └── sensor_mock.py           # Synthetic sensor data generator for WSL
 ├── custom_pcbs/                     # Hardware PCB schematics & gerbers
 ├── printed_parts/                   # 3D printable chassis & sensor mounts (.stl, .step)
-├── docs/                            # Hardware, Betaflight dumps & testing handoff guides
+├── docs/                            # Hardware, FC dumps & testing handoff guides
 │   ├── architecture_diagram.md
+│   ├── inav_9.1.0_diff_all.txt      # Hardware-verified INAV 9.1.0 diff all backup (SPEEDYBEEF405MINI)
 │   ├── inav_migration_handoff.md    # Step-by-step handoff guide for migrating from main branch to iNAV
 │   └── shift_pid_testing_handoff.md # 3D shift & 4-axis PID testing guide & mandatory agent tuning log
 ├── tests/                           # Unit and live verification tests
@@ -134,6 +135,9 @@ drone-control-center/
   - `MSP2_SENSOR_OPTICALFLOW` (`0x1F02`, `<Bii`): `quality = 255`, rounded `raw_dx`, `raw_dy`.
   - Sent fire-and-forget via `send_RAW_msg` without `receive_msg()` because iNAV returns `MSP_RESULT_NO_REPLY` for `0x1F00..0x1FFF` sensor injection commands.
 - **Output:** Dispatches raw RC channels `send_RAW_RC`, streams MSPv2 sensor frames, and maintains connection alive to avoid flight controller failsafe timeouts.
+- **iNAV 9.1.0 Firmware Configuration (`SPEEDYBEEF405MINI`, backup in [`docs/inav_9.1.0_diff_all.txt`](file:///home/rodion/projects/drone-control-center/docs/inav_9.1.0_diff_all.txt)):**
+  - Uses `motor_pwm_protocol = MULTISHOT` (avoiding the `TIM3`/`TIM4` `DSHOT300` DMA conflict), `motorstop_on_low = OFF`, and `throttle_idle = 15` (15% = `1150 PWM` idle, exceeding the 4-in-1 ESC's `~1130–1150 PWM` startup threshold while `armed` mode keeps `rc_throttle = 900` below `min_check` so arming succeeds).
+  - Configured via CLI with `aux 0..3` (`ARM`/`ANGLE` on `AUX1`, `NAV ALTHOLD`/`NAV POSHOLD` on `AUX2`) and `logic 0 1 -1 22 0 0 0 0 0` (`LOGIC_CONDITION_OVERRIDE_ARMING_SAFETY`) to bypass `WAITING FOR GPS FIX` in GPS-less indoor optical flow flight, alongside iNAV 9.1.0 bounds (`nav_manual_speed = 50`, `nav_auto_speed = 50`, `nav_mc_manual_climb_rate = 40`, `nav_mc_auto_climb_rate = 40`, `nav_mc_bank_angle = 15`, `pos_hold_deadband = 25`, `alt_hold_deadband = 40`).
 
 ---
 
